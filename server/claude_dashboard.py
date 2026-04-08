@@ -525,6 +525,38 @@ def detect_session_state(lines: list[str]) -> str:
                         "<ide_active_file>", "<ide_selection>")
             if any(text.strip().startswith(tag) for tag in ide_tags):
                 continue  # skip IDE event, keep scanning
+
+            # Check if this is a tool_result and there are still unmatched
+            # tool_use calls (parallel tool calls where not all results are
+            # back yet).  If so, the session is still waiting for approval
+            # on outstanding tools.
+            is_tool_result = isinstance(content, list) and any(
+                isinstance(b, dict) and b.get("type") == "tool_result"
+                for b in content
+            )
+            if is_tool_result:
+                tool_use_ids = set()
+                tool_result_ids = set()
+                for prev_line in lines:
+                    if not prev_line.strip():
+                        continue
+                    try:
+                        prev = json.loads(prev_line)
+                    except json.JSONDecodeError:
+                        continue
+                    prev_content = (prev.get("message") or {}).get("content", [])
+                    if not isinstance(prev_content, list):
+                        continue
+                    for b in prev_content:
+                        if not isinstance(b, dict):
+                            continue
+                        if b.get("type") == "tool_use":
+                            tool_use_ids.add(b.get("id"))
+                        elif b.get("type") == "tool_result":
+                            tool_result_ids.add(b.get("tool_use_id"))
+                if tool_use_ids - tool_result_ids:
+                    return "approving"
+
             # Real user message or tool_result → Claude should be responding.
             return "thinking"
 
@@ -823,10 +855,10 @@ def collect_sessions() -> dict:
                             status = "subagent"
                         elif activity == "hook":
                             status = "hook"
-                        elif activity == "thinking" or session_state == "thinking":
-                            status = "thinking"
                         elif session_state == "approving":
                             status = "approving"
+                        elif activity == "thinking" or session_state == "thinking":
+                            status = "thinking"
                         else:
                             status = "waiting"
                     elif last_ts:

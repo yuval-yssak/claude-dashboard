@@ -88,6 +88,11 @@ export function SessionCard({
 				<span>{s.last_activity_ago}</span>
 				{shortCwd && <span title={s.cwd}>{shortCwd}</span>}
 				{s.git_branch && <span>branch: {s.git_branch}</span>}
+				{s.permission_mode && s.permission_mode !== "default" && (
+					<span className={`mode-badge mode-${s.permission_mode}`}>
+						{s.permission_mode === "acceptEdits" ? "accept-edits" : s.permission_mode} mode
+					</span>
+				)}
 				<span>{s.file_size_kb} KB</span>
 				<span
 					className="jsonl-link"

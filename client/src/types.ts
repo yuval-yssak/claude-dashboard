@@ -33,6 +33,7 @@ export interface Session {
 	last_user_msg: string | null;
 	last_assistant_text: string | null;
 	git_branch: string | null;
+	permission_mode: string | null;
 	kind: string;
 	todos: ClaudeTodo[] | null;
 	file_size_kb: number;

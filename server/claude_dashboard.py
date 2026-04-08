@@ -580,6 +580,20 @@ def get_git_branch(lines: list[str]) -> str | None:
     return None
 
 
+def get_permission_mode(lines: list[str]) -> str | None:
+    for line in reversed(lines):
+        if "permissionMode" not in line:
+            continue
+        try:
+            obj = json.loads(line)
+            mode = obj.get("permissionMode")
+            if mode:
+                return mode
+        except json.JSONDecodeError:
+            continue
+    return None
+
+
 def find_parent_app(pid: int) -> str | None:
     """Walk up the process tree from *pid* to find the owning GUI application."""
     known_apps = {
@@ -833,6 +847,7 @@ def collect_sessions() -> dict:
                     last_ts = get_last_timestamp(lines)
                     todos = extract_last_todo(lines)
                     git_branch = get_git_branch(lines)
+                    permission_mode = get_permission_mode(lines)
                     topic = get_session_topic(jsonl_file)
                     last_user_msg = extract_last_user_message(lines)
                     last_assistant_text = extract_last_assistant_text(lines)
@@ -905,6 +920,7 @@ def collect_sessions() -> dict:
                         "last_user_msg": last_user_msg,
                         "last_assistant_text": last_assistant_text,
                         "git_branch": git_branch,
+                        "permission_mode": permission_mode,
                         "kind": kind,
                         "todos": todos,
                         "file_size_kb": round(file_size / 1024, 1),

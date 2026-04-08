@@ -401,6 +401,25 @@ def extract_last_user_message(lines: list[str]) -> str | None:
     return None
 
 
+def extract_last_assistant_text(lines: list[str]) -> str | None:
+    for line in reversed(lines):
+        if '"role":"assistant"' not in line and '"role": "assistant"' not in line:
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if obj.get("type") != "assistant":
+            continue
+        content = (obj.get("message") or {}).get("content", [])
+        if isinstance(content, str):
+            return content[:500]
+        for block in reversed(content if isinstance(content, list) else []):
+            if block.get("type") == "text" and block.get("text", "").strip():
+                return block["text"].strip()[:500]
+    return None
+
+
 def get_session_topic(jsonl_path: str) -> str | None:
     try:
         with open(jsonl_path) as f:
@@ -784,6 +803,7 @@ def collect_sessions() -> dict:
                     git_branch = get_git_branch(lines)
                     topic = get_session_topic(jsonl_file)
                     last_user_msg = extract_last_user_message(lines)
+                    last_assistant_text = extract_last_assistant_text(lines)
                     session_state = detect_session_state(lines)
 
                     pid_info = pid_map.get(session_id, {})
@@ -851,10 +871,12 @@ def collect_sessions() -> dict:
                         "last_activity_ago": time_ago(last_ts) if last_ts else "unknown",
                         "topic": topic,
                         "last_user_msg": last_user_msg,
+                        "last_assistant_text": last_assistant_text,
                         "git_branch": git_branch,
                         "kind": kind,
                         "todos": todos,
                         "file_size_kb": round(file_size / 1024, 1),
+                        "jsonl_path": jsonl_file,
                         "user_notes": ann.get("notes", ""),
                         "user_todos": ann.get("todos", []),
                     })

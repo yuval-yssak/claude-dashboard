@@ -1,0 +1,25 @@
+# Runtime data
+claude-dashboard-data.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Node
+client/node_modules/
+client/dist/
+client/dist-ssr/
+
+# Editors
+.vscode/
+.idea/
+*.sw?
+.DS_Store
+
+# Caches
+.ruff_cache/
+.vite/
+
+# Logs
+*.log

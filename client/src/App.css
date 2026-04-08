@@ -236,6 +236,14 @@ body {
 	-webkit-box-orient: vertical;
 	overflow: hidden;
 }
+.last-msg.last-user-msg {
+	color: var(--recent);
+}
+.last-msg.last-assistant-text {
+	color: #7eb8da;
+	font-style: normal;
+	-webkit-line-clamp: 1;
+}
 .last-msg.active-hint {
 	color: var(--text-dim);
 }
@@ -250,6 +258,15 @@ body {
 }
 .card-meta span {
 	white-space: nowrap;
+}
+.card-meta .jsonl-link {
+	color: var(--text-dim);
+	cursor: pointer;
+	white-space: nowrap;
+	transition: color 0.15s;
+}
+.card-meta .jsonl-link:hover {
+	color: var(--accent);
 }
 
 /* Claude's auto-detected todos */
@@ -332,27 +349,60 @@ body {
 	border-top: 1px solid var(--border);
 }
 
-.annotations-toggle {
-	font-size: 11px;
+.notes-preview {
+	font-size: 12px;
+	color: var(--text-dim);
+	line-height: 1.4;
+	display: -webkit-box;
+	-webkit-line-clamp: 3;
+	-webkit-box-orient: vertical;
+	overflow: hidden;
+	cursor: pointer;
+	padding: 4px 0;
+	white-space: pre-wrap;
+	border-radius: 4px;
+	transition: color 0.15s;
+}
+.notes-preview:hover {
+	color: var(--text);
+}
+
+.user-todos-inline {
+	margin-top: 6px;
+	max-height: 140px;
+	overflow-y: auto;
+}
+
+.ann-label-inline {
+	font-size: 10px;
 	font-weight: 600;
 	text-transform: uppercase;
 	letter-spacing: 0.5px;
-	color: var(--accent);
+	color: var(--text-dim);
+	margin-bottom: 2px;
+}
+
+.annotations-edit-toggle {
+	font-size: 10px;
+	font-weight: 500;
+	color: var(--text-dim);
 	cursor: pointer;
 	user-select: none;
 	display: flex;
 	align-items: center;
 	gap: 4px;
+	margin-top: 6px;
+	transition: color 0.15s;
 }
-.annotations-toggle:hover {
-	color: var(--text);
+.annotations-edit-toggle:hover {
+	color: var(--accent);
 }
-.annotations-toggle .arrow {
-	font-size: 9px;
+.annotations-edit-toggle .arrow {
+	font-size: 8px;
 	transition: transform 0.2s;
 	display: inline-block;
 }
-.annotations-toggle .arrow.open {
+.annotations-edit-toggle .arrow.open {
 	transform: rotate(90deg);
 }
 
@@ -504,13 +554,6 @@ body {
 	opacity: 0.85;
 }
 
-.notes-indicator,
-.todos-indicator {
-	font-size: 10px;
-	color: var(--accent);
-	margin-left: 6px;
-	font-weight: 400;
-}
 
 .open-btn {
 	padding: 3px 10px;

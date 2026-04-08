@@ -46,31 +46,24 @@ export function AnnotationsPanel({
 
 	return (
 		<div className="annotations-section">
-			<div className="annotations-toggle" onClick={onToggle}>
-				<span className={`arrow${isOpen ? " open" : ""}`}>&#9654;</span> My
-				Notes & Tasks
-				{!isOpen && hasNotes && (
-					<span className="notes-indicator">has notes</span>
-				)}
-				{!isOpen && hasTodos && (
-					<span className="todos-indicator">
-						{todosDone}/{todosTotal} tasks
-					</span>
-				)}
-			</div>
-			<div className={`annotations-body${isOpen ? " open" : ""}`}>
-				<div className="ann-label">Notes</div>
-				<textarea
-					className="notes-area"
-					placeholder="Jot down what you're struggling with, what's left..."
-					value={session.user_notes || ""}
-					onFocus={onNotesFocus}
-					onBlur={onNotesBlur}
-					onChange={(e) => onNotesChange(e.target.value)}
-				/>
-				<div className="user-todos-list">
-					<div className="ann-label">Your checklist</div>
-					{(session.user_todos || []).map((t: UserTodo, i: number) => (
+			{/* Notes preview - shown when closed AND has notes */}
+			{!isOpen && hasNotes && (
+				<div
+					className="notes-preview"
+					onClick={onToggle}
+					title="Click to edit"
+				>
+					{session.user_notes}
+				</div>
+			)}
+
+			{/* User tasks - ALWAYS visible and interactive */}
+			{hasTodos && (
+				<div className="user-todos-inline">
+					<div className="ann-label-inline">
+						Tasks — {todosDone}/{todosTotal}
+					</div>
+					{session.user_todos.map((t: UserTodo, i: number) => (
 						<div className="user-todo-item" key={i}>
 							<input
 								type="checkbox"
@@ -90,18 +83,37 @@ export function AnnotationsPanel({
 							</button>
 						</div>
 					))}
-					<div className="add-todo-row">
-						<input
-							type="text"
-							className="add-todo-input"
-							ref={addInputRef}
-							placeholder="Add a task..."
-							onKeyDown={handleKeyDown}
-						/>
-						<button type="button" className="add-todo-btn" onClick={handleAdd}>
-							Add
-						</button>
-					</div>
+				</div>
+			)}
+
+			{/* Edit toggle */}
+			<div className="annotations-edit-toggle" onClick={onToggle}>
+				<span className={`arrow${isOpen ? " open" : ""}`}>&#9654;</span>
+				{hasNotes || hasTodos ? "Edit notes & tasks" : "+ Add notes & tasks"}
+			</div>
+
+			{/* Expandable: textarea + add task row */}
+			<div className={`annotations-body${isOpen ? " open" : ""}`}>
+				<div className="ann-label">Notes</div>
+				<textarea
+					className="notes-area"
+					placeholder="Jot down what you're struggling with, what's left..."
+					value={session.user_notes || ""}
+					onFocus={onNotesFocus}
+					onBlur={onNotesBlur}
+					onChange={(e) => onNotesChange(e.target.value)}
+				/>
+				<div className="add-todo-row">
+					<input
+						type="text"
+						className="add-todo-input"
+						ref={addInputRef}
+						placeholder="Add a task..."
+						onKeyDown={handleKeyDown}
+					/>
+					<button type="button" className="add-todo-btn" onClick={handleAdd}>
+						Add
+					</button>
 				</div>
 			</div>
 		</div>

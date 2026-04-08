@@ -31,10 +31,12 @@ export interface Session {
 	last_activity_ago: string;
 	topic: string | null;
 	last_user_msg: string | null;
+	last_assistant_text: string | null;
 	git_branch: string | null;
 	kind: string;
 	todos: ClaudeTodo[] | null;
 	file_size_kb: number;
+	jsonl_path: string;
 	user_notes: string;
 	user_todos: UserTodo[];
 }

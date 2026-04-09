@@ -892,7 +892,13 @@ def collect_sessions() -> dict:
                         elif session_state == "approving":
                             status = "approving"
                         elif activity == "thinking" or session_state == "thinking":
-                            status = "thinking"
+                            # If JSONL says "thinking" but no process is active,
+                            # the session is waiting on user input that wasn't
+                            # logged (e.g. ExitPlanMode prompt).
+                            if session_state == "thinking" and activity == "idle":
+                                status = "approving" if permission_mode == "plan" else "waiting"
+                            else:
+                                status = "thinking"
                         else:
                             status = "waiting"
                     elif last_ts:

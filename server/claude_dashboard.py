@@ -471,6 +471,11 @@ def detect_session_state(lines: list[str]) -> str:
     """
     RECENCY_THRESHOLD = 2  # seconds — if newer, assume still streaming
 
+    # Track whether the most recent non-skipped entry was a local_command
+    # system entry — if so, the user message that triggered it should also
+    # be skipped (it was a slash command, already handled).
+    saw_local_command = False
+
     for line in reversed(lines):
         if not line.strip():
             continue
@@ -479,6 +484,12 @@ def detect_session_state(lines: list[str]) -> str:
         except json.JSONDecodeError:
             continue
         msg_type = obj.get("type")
+
+        # system entries with subtype "local_command" mean a slash command
+        # was executed.  Mark it so we skip the triggering user message.
+        if msg_type == "system" and obj.get("subtype") == "local_command":
+            saw_local_command = True
+            continue
 
         if msg_type == "assistant":
             content = (obj.get("message") or {}).get("content", [])
@@ -521,10 +532,18 @@ def detect_session_state(lines: list[str]) -> str:
                     if isinstance(block, dict) and block.get("type") == "text":
                         text = block.get("text", "")
                         break
-            ide_tags = ("<ide_opened_file>", "<ide_action>", "<ide_closed_file>",
-                        "<ide_active_file>", "<ide_selection>")
-            if any(text.strip().startswith(tag) for tag in ide_tags):
-                continue  # skip IDE event, keep scanning
+            skip_tags = ("<ide_opened_file>", "<ide_action>", "<ide_closed_file>",
+                         "<ide_active_file>", "<ide_selection>",
+                         "<local-command-caveat>", "<local-command-stdout>",
+                         "<command-name>", "<command-message>", "<command-args>")
+            if any(text.strip().startswith(tag) for tag in skip_tags):
+                continue  # skip IDE/local-command event, keep scanning
+
+            # If we previously saw a local_command system entry, this user
+            # message is the slash command that triggered it — skip it.
+            if saw_local_command:
+                saw_local_command = False
+                continue
 
             # Check if this is a tool_result and there are still unmatched
             # tool_use calls (parallel tool calls where not all results are

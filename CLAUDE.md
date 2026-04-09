@@ -88,3 +88,7 @@ The backend combines JSONL analysis (conversational state) with process tree ins
 
 - **Python**: Ruff with 120-char lines, Python 3.10+ target
 - **TypeScript/React**: Biome with tab indentation
+
+### Comments
+
+Whenever making a code change that is not immediately obvious — e.g. a workaround, a non-obvious flag, a subtle timing dependency, or a platform-specific fix — add a concise inline comment explaining why it is needed. One to three lines is usually enough. Skip comments where the code is self-evident.

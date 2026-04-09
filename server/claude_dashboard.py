@@ -892,11 +892,18 @@ def collect_sessions() -> dict:
                         elif session_state == "approving":
                             status = "approving"
                         elif activity == "thinking" or session_state == "thinking":
-                            # If JSONL says "thinking" but no process is active,
-                            # the session is waiting on user input that wasn't
-                            # logged (e.g. ExitPlanMode prompt).
                             if session_state == "thinking" and activity == "idle":
-                                status = "approving" if permission_mode == "plan" else "waiting"
+                                # Workaround: during LLM inference the node process appears
+                                # idle (waiting on API HTTP response, no child processes,
+                                # low CPU).  Use JSONL recency to distinguish "still
+                                # processing" from "finished but waiting on an unlogged
+                                # prompt" (e.g. ExitPlanMode approval).  If the file was
+                                # written recently (<10s), Claude is likely still working.
+                                jsonl_age = time.time() - file_mtime
+                                if jsonl_age > 10:
+                                    status = "approving" if permission_mode == "plan" else "waiting"
+                                else:
+                                    status = "thinking"
                             else:
                                 status = "thinking"
                         else:

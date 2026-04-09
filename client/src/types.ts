@@ -48,6 +48,15 @@ export interface Account {
 	sessions: Session[];
 }
 
+export interface CardPosition {
+	index: number;
+	pinned: boolean;
+}
+
+export interface LayoutPreferences {
+	positions: Record<string, Record<string, CardPosition>>;
+}
+
 export interface DashboardData {
 	accounts: Account[];
 	generated_at: string;

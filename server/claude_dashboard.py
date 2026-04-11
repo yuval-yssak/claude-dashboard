@@ -457,7 +457,7 @@ def get_last_timestamp(lines: list[str]) -> str | None:
     return None
 
 
-def detect_session_state(lines: list[str]) -> str:
+def detect_session_state(lines: list[str], permission_mode: str | None = None) -> str:
     """Determine the conversational state of a live session from its JSONL tail.
 
     Returns one of:
@@ -506,11 +506,16 @@ def detect_session_state(lines: list[str]) -> str:
             model = (obj.get("message") or {}).get("model", "")
             if model == "<synthetic>":
                 # Synthetic message is the last real conversational entry —
-                # Claude has finished and is waiting for user input.
+                # Claude has finished. In plan mode, treat as approving.
+                if permission_mode == "plan":
+                    return "approving"
                 return "waiting"
 
             content = (obj.get("message") or {}).get("content", [])
             if isinstance(content, str):
+                # In plan mode, a text-only response means Claude is presenting the plan.
+                if permission_mode == "plan":
+                    return "approving"
                 return "waiting"
 
             has_tool_use = any(
@@ -538,6 +543,9 @@ def detect_session_state(lines: list[str]) -> str:
                         return "thinking"  # too recent, probably still streaming
                 except Exception:
                     pass
+            # In plan mode, a final text-only response means Claude is presenting the plan.
+            if permission_mode == "plan":
+                return "approving"
             return "waiting"
 
         if msg_type == "user":
@@ -969,7 +977,7 @@ def collect_sessions() -> dict:
                     topic = get_session_topic(jsonl_file)
                     last_user_msg = extract_last_user_message(lines)
                     last_assistant_text = extract_last_assistant_text(lines)
-                    session_state = detect_session_state(lines)
+                    session_state = detect_session_state(lines, permission_mode)
 
                     pid_info = pid_map.get(session_id, {})
                     pid = pid_info.get("pid")

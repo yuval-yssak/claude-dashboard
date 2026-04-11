@@ -890,18 +890,22 @@ def collect_sessions() -> dict:
                         elif activity == "hook":
                             status = "hook"
                         elif session_state == "approving":
-                            status = "approving"
+                            # tool_use in JSONL without tool_result could mean
+                            # waiting for user approval OR the tool is currently
+                            # executing.  If the process tree shows active child
+                            # processes, the tool is running — not blocked.
+                            status = "thinking" if activity == "thinking" else "approving"
                         elif activity == "thinking" or session_state == "thinking":
                             if session_state == "thinking" and activity == "idle":
-                                # Workaround: during LLM inference the node process appears
-                                # idle (waiting on API HTTP response, no child processes,
+                                # During LLM inference the node process appears idle
+                                # (waiting on API HTTP response, no child processes,
                                 # low CPU).  Use JSONL recency to distinguish "still
-                                # processing" from "finished but waiting on an unlogged
-                                # prompt" (e.g. ExitPlanMode approval).  If the file was
-                                # written recently (<10s), Claude is likely still working.
+                                # processing" from "finished but waiting for input".
+                                # If the file was written recently (<10s), Claude is
+                                # likely still working.
                                 jsonl_age = time.time() - file_mtime
                                 if jsonl_age > 10:
-                                    status = "approving" if permission_mode == "plan" else "waiting"
+                                    status = "waiting"
                                 else:
                                     status = "thinking"
                             else:

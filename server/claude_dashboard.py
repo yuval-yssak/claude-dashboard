@@ -617,6 +617,45 @@ def detect_session_state(lines: list[str]) -> str:
     return "unknown"
 
 
+def _is_plan_approval_pending(lines: list[str]) -> bool:
+    """Check if the session is in plan mode waiting for plan approval.
+
+    Returns True only when the last permission-mode entry is "plan" AND
+    there's no real (non-synthetic) assistant activity after it — which
+    would indicate the plan was already approved and Claude continued
+    working.
+    """
+    skip_types = ("file-history-snapshot", "attachment", "custom-title",
+                  "agent-name")
+    found_plan_mode = False
+    for line in reversed(lines):
+        if not line.strip():
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        msg_type = obj.get("type")
+        if msg_type in skip_types:
+            continue
+        if msg_type == "permission-mode":
+            if obj.get("permissionMode") == "plan":
+                found_plan_mode = True
+            # Any permission-mode entry (plan or otherwise) is definitive.
+            break
+        # Real assistant activity after the permission-mode entry means
+        # the plan was already approved and Claude continued working.
+        if msg_type == "assistant":
+            model = (obj.get("message") or {}).get("model", "")
+            if model != "<synthetic>":
+                return False
+            continue  # skip synthetic entries, keep scanning
+        # User messages, system entries, etc. — keep scanning past them
+        # to find the permission-mode entry.
+        continue
+    return found_plan_mode
+
+
 def _last_entry_is_user(lines: list[str]) -> bool:
     """Check if the last meaningful conversational JSONL entry is a user message.
 
@@ -1011,6 +1050,14 @@ def collect_sessions() -> dict:
                                 status = "thinking"
                         else:
                             status = "waiting"
+                        # Plan mode: ExitPlanMode presents a plan for user
+                        # approval — treat as "approving" while alive.
+                        # Only apply when plan approval is actually pending:
+                        # the permission-mode entry says "plan" AND there's
+                        # no real assistant work after it (which would mean
+                        # the plan was already approved and acted on).
+                        if status == "waiting" and _is_plan_approval_pending(lines):
+                            status = "approving"
                     elif last_ts:
                         try:
                             dt = datetime.fromisoformat(last_ts.replace("Z", "+00:00"))

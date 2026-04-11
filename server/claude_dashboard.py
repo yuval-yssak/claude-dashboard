@@ -1028,7 +1028,15 @@ def collect_sessions() -> dict:
 
         sessions = [s for s in sessions if s["status"] not in ("inactive", "unknown")]
 
-        status_order = {"thinking": 0, "waiting": 1, "recent": 2, "idle": 3}
+        status_order = {
+            "approving": 0,
+            "waiting": 1,
+            "thinking": 2,
+            "subagent": 2,
+            "hook": 2,
+            "recent": 3,
+            "idle": 4,
+        }
         sessions.sort(key=lambda s: (
             status_order.get(s["status"], 5),
             -(datetime.fromisoformat(s["last_activity"].replace("Z", "+00:00")).timestamp()

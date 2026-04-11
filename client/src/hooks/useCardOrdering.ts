@@ -149,7 +149,8 @@ export function useCardOrdering(sessions: Session[], accountId: string) {
 					const serverIdx = server.indexOf(specificId);
 					const insertIdx = Math.min(serverIdx, filtered.length);
 					filtered.splice(insertIdx, 0, specificId);
-					return filtered;
+					// Re-apply pin order so pinned cards are never displaced by server reorders
+					return applyPinnedToTop(filtered, pinnedIds);
 				}
 				return server;
 			});
@@ -160,7 +161,7 @@ export function useCardOrdering(sessions: Session[], accountId: string) {
 				return next;
 			});
 		},
-		[],
+		[pinnedIds],
 	);
 
 	// Cancel pending move if card is already at the right position

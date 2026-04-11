@@ -725,6 +725,34 @@ def _last_entry_is_user(lines: list[str]) -> bool:
     return False
 
 
+def _last_entry_is_synthetic(lines: list[str]) -> bool:
+    """Check if the last meaningful conversational JSONL entry is synthetic.
+
+    Returns True if the most recent non-metadata entry is an assistant
+    message with model="<synthetic>".  When a session is resumed after
+    interruption, the synthetic "No response requested." message is the
+    last entry — but Claude may already be in a new turn showing an
+    approval prompt whose tool_use hasn't been written yet.
+    """
+    skip_types = ("system", "attachment", "file-history-snapshot",
+                  "custom-title", "agent-name", "permission-mode")
+    for line in reversed(lines):
+        if not line.strip():
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        msg_type = obj.get("type")
+        if msg_type in skip_types:
+            continue
+        if msg_type == "assistant":
+            model = (obj.get("message") or {}).get("model", "")
+            return model == "<synthetic>"
+        return False
+    return False
+
+
 def get_git_branch(lines: list[str]) -> str | None:
     for line in reversed(lines):
         if "gitBranch" not in line:
@@ -1076,7 +1104,17 @@ def collect_sessions() -> dict:
                             else:
                                 status = "thinking"
                         else:
-                            status = "waiting"
+                            # After a session resume, the last JSONL entry is a
+                            # synthetic "No response requested." — but Claude may
+                            # already be in a new turn blocked on an approval
+                            # prompt whose tool_use hasn't been written yet.
+                            # Detect this by checking if the "waiting" came from
+                            # a synthetic entry on an alive, idle process.
+                            if (activity == "idle"
+                                    and _last_entry_is_synthetic(lines)):
+                                status = "approving"
+                            else:
+                                status = "waiting"
                         # Plan mode: ExitPlanMode presents a plan for user
                         # approval — treat as "approving" while alive.
                         # Only apply when plan approval is actually pending:

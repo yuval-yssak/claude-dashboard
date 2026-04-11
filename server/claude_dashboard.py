@@ -492,6 +492,13 @@ def detect_session_state(lines: list[str]) -> str:
             continue
 
         if msg_type == "assistant":
+            # Synthetic messages (e.g. "No response requested." after session
+            # resume) are harness-generated, not real Claude output — skip them
+            # so we find the actual last conversational entry.
+            model = (obj.get("message") or {}).get("model", "")
+            if model == "<synthetic>":
+                continue
+
             content = (obj.get("message") or {}).get("content", [])
             if isinstance(content, str):
                 return "waiting"
@@ -952,14 +959,13 @@ def collect_sessions() -> dict:
                                 # likely still working.
                                 jsonl_age = time.time() - file_mtime
                                 if jsonl_age > 10:
-                                    # If the last conversational entry was a tool_result,
-                                    # Claude was mid-turn and is likely blocked on
-                                    # approval for the next tool (the pending assistant
-                                    # message hasn't been written to JSONL yet).
-                                    if _last_entry_is_tool_result(lines):
-                                        status = "approving"
-                                    else:
-                                        status = "waiting"
+                                    # Claude was mid-turn but hasn't written anything
+                                    # in >10s while the process is idle — most likely
+                                    # blocked on a permission prompt (the pending
+                                    # tool_use hasn't been written to JSONL yet).
+                                    # If Claude had finished, there'd be a real
+                                    # assistant entry making session_state "waiting".
+                                    status = "approving"
                                 else:
                                     status = "thinking"
                             else:

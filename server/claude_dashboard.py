@@ -1111,6 +1111,8 @@ class DashboardHandler(http.server.BaseHTTPRequestHandler):
                 mime, _ = mimetypes.guess_type(str(candidate))
                 self.send_response(200)
                 self.send_header("Content-Type", mime or "application/octet-stream")
+                if candidate.name == "index.html":
+                    self.send_header("Cache-Control", "no-store")
                 self.end_headers()
                 self.wfile.write(candidate.read_bytes())
             else:
@@ -1119,6 +1121,7 @@ class DashboardHandler(http.server.BaseHTTPRequestHandler):
                 if index.exists():
                     self.send_response(200)
                     self.send_header("Content-Type", "text/html; charset=utf-8")
+                    self.send_header("Cache-Control", "no-store")
                     self.end_headers()
                     self.wfile.write(index.read_bytes())
                 else:

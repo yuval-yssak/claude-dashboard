@@ -566,6 +566,11 @@ def detect_session_state(lines: list[str]) -> str:
                 saw_local_command = False
                 continue
 
+            # User interrupted a tool call — Claude is waiting for new input,
+            # not processing this message.
+            if text.strip() == "[Request interrupted by user for tool use]":
+                return "waiting"
+
             # Check if this is a tool_result and there are still unmatched
             # tool_use calls (parallel tool calls where not all results are
             # back yet).  If so, the session is still waiting for approval
@@ -585,6 +590,20 @@ def detect_session_state(lines: list[str]) -> str:
                                     and cb.get("type") == "tool_reference"
                                     and cb.get("tool_name") == "AskUserQuestion"):
                                     return "questioning"
+
+                # User rejected/interrupted a tool call — Claude is waiting
+                # for new input, not processing this result.
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") == "tool_result" and block.get("is_error"):
+                        rc = block.get("content", "")
+                        reject_text = rc if isinstance(rc, str) else ""
+                        if not reject_text and isinstance(rc, list):
+                            for cb in rc:
+                                if isinstance(cb, dict) and cb.get("type") == "text":
+                                    reject_text = cb.get("text", "")
+                                    break
+                        if "The user doesn't want to proceed with this tool use" in reject_text:
+                            return "waiting"
 
                 tool_use_ids = set()
                 tool_result_ids = set()

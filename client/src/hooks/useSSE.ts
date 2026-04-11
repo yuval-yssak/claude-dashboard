@@ -33,8 +33,21 @@ export function useSSE<T>(
 			}
 		};
 
+		// When the tab is backgrounded, browsers throttle or drop SSE
+		// connections.  Fetch fresh data when the tab becomes visible again
+		// so the UI isn't stuck on a stale snapshot.
+		const onVisible = () => {
+			if (document.visibilityState !== "visible") return;
+			fetch("/api/sessions")
+				.then((r) => r.json())
+				.then((d) => onDataRef.current(d as T))
+				.catch(() => {});
+		};
+		document.addEventListener("visibilitychange", onVisible);
+
 		return () => {
 			es.close();
+			document.removeEventListener("visibilitychange", onVisible);
 			setStatus("disconnected");
 		};
 	}, [eventName]);

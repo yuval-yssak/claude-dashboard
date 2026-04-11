@@ -1,0 +1,17 @@
+{
+  "name": "Claude Dashboard",
+  "short_name": "Dashboard",
+  "description": "Real-time Claude Code session monitor",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0f1117",
+  "theme_color": "#0f1117",
+  "icons": [
+    {
+      "src": "/pwa-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

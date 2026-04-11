@@ -12,8 +12,9 @@ A live-updating dashboard for monitoring multiple Claude Code sessions across ac
 - **Claude task tracking** — displays Claude's internal TodoWrite tasks with progress bars
 - **Session management** — focus/resume sessions directly from the dashboard
 - **Mobile responsive** — read-only monitoring optimized for phone screens
+- **PWA installable** — install as a standalone app on desktop or mobile (requires HTTPS)
 - **Background service** — runs as a macOS launchd agent (no terminal required)
-- **Cross-device access** — accessible from any device via Tailscale mesh VPN
+- **Cross-device access** — accessible from any device via Tailscale mesh VPN + HTTPS (Tailscale Serve)
 
 ## Architecture
 
@@ -70,6 +71,16 @@ See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for full instructions, or use the q
 
 This installs dependencies, builds the frontend, and registers a macOS launchd service that starts on login and auto-restarts on crash.
 
+### HTTPS + PWA Install
+
+To access over HTTPS (required for PWA install on mobile):
+
+```bash
+tailscale serve --bg --https=443 http://localhost:8484
+```
+
+Then open `https://<machine-name>.<tailnet>.ts.net` on your phone and install as an app.
+
 ## Tech Stack
 
 | Layer | Technology |
@@ -78,7 +89,7 @@ This installs dependencies, builds the frontend, and registers a macOS launchd s
 | File watching | [watchdog](https://github.com/gorakhargosh/watchdog) (optional, graceful fallback) |
 | Frontend | React 19, TypeScript, Vite |
 | Linting | [Biome](https://biomejs.dev/) (frontend), [Ruff](https://github.com/astral-sh/ruff) (backend) |
-| Deployment | macOS launchd + [Tailscale](https://tailscale.com/) |
+| Deployment | macOS launchd + [Tailscale](https://tailscale.com/) (Serve for HTTPS) |
 
 ## Project Structure
 

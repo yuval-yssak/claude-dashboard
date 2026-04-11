@@ -24,6 +24,9 @@ ruff check server/                               # Uses server/ruff.toml
 
 # Deploy as macOS launchd service
 ./deploy/install.sh
+
+# HTTPS via Tailscale (required for PWA install on mobile)
+tailscale serve --bg --https=443 http://localhost:8484
 ```
 
 No automated test suite — manual test scenarios are in `docs/TESTING.md`.
@@ -53,6 +56,7 @@ Python 3 HTTP Server (stdlib http.server + threading)
 - `components/` — Header, AccountSection (drag-drop grid), SessionCard, AnnotationsPanel, ClaudeTodos, StatusBadge, SummaryBar, Toast
 - `hooks/` — useSSE (EventSource), useDebouncedSave, useCardOrdering (drag-drop + pinning via @dnd-kit)
 - Mobile-responsive (single column < 920px, read-only on mobile)
+- PWA-installable (manifest + no-op service worker, no offline support — app requires live SSE connection)
 
 ## Session State Detection
 

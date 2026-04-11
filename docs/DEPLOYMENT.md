@@ -69,26 +69,46 @@ Tailscale creates a private mesh VPN so you can access the dashboard from your p
 brew install --cask tailscale
 ```
 
-Open Tailscale from Applications, sign in, and note your Tailscale IP:
+Open Tailscale from Applications, sign in, and note your Tailscale FQDN:
 
 ```bash
-tailscale ip -4
-# Example: 100.64.0.1
+tailscale status --self
+# Shows: 100.x.x.x  yuvals-macbook  ...
 ```
+
+### HTTPS via Tailscale Serve
+
+Tailscale Serve proxies HTTPS traffic to your local HTTP server with a valid TLS certificate. This is required for PWA installation on mobile devices.
+
+```bash
+tailscale serve --bg --https=443 http://localhost:8484
+```
+
+This makes the dashboard available at `https://<machine-name>.<tailnet>.ts.net` with automatic TLS.
+
+To find your full URL:
+
+```bash
+tailscale status --json | grep MagicDNSSuffix
+# Returns your tailnet suffix, e.g. tail1f8fda.ts.net
+```
+
+Your dashboard URL: `https://<machine-name>.<tailnet-suffix>`
+
+To stop the proxy:
+
+```bash
+tailscale serve --https=443 off
+```
+
+> **Note:** Tailscale Serve must be enabled on your tailnet. If you get an error, the CLI will provide a link to enable it in the admin console.
 
 ### On your phone
 
 1. Install Tailscale from App Store / Play Store
 2. Sign in with the same account
-3. Open `http://<your-tailscale-ip>:8484` in your phone's browser
-
-### Optional: MagicDNS
-
-With Tailscale's MagicDNS enabled, you can use a hostname instead of an IP:
-
-```
-http://macbook:8484
-```
+3. Open `https://<machine-name>.<tailnet>.ts.net` in Chrome
+4. Tap the menu (⋮) → **"Install app"** to install as a PWA
 
 ## Configuration
 

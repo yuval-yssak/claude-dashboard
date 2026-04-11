@@ -461,12 +461,13 @@ def detect_session_state(lines: list[str]) -> str:
     """Determine the conversational state of a live session from its JSONL tail.
 
     Returns one of:
-        "waiting"   – Claude finished responding; waiting for user input (or
-                      asking a question — indistinguishable without NLP).
-        "thinking"  – Claude is generating a response (last entry is a user
-                      message or a tool_result fed back to Claude).
+        "questioning" – Claude is asking the user a multi-choice question via
+                        AskUserQuestion (either pending call or active).
         "approving" – Claude requested a tool_use and is waiting for the user
                       to approve (or deny) it before proceeding.
+        "waiting"   – Claude finished responding; waiting for user input.
+        "thinking"  – Claude is generating a response (last entry is a user
+                      message or a tool_result fed back to Claude).
         "unknown"   – cannot determine (e.g. empty transcript).
     """
     RECENCY_THRESHOLD = 2  # seconds — if newer, assume still streaming
@@ -508,6 +509,10 @@ def detect_session_state(lines: list[str]) -> str:
                 b.get("type") == "tool_use" for b in content if isinstance(b, dict)
             )
             if has_tool_use:
+                # Check if any tool_use is AskUserQuestion (high priority).
+                for b in content:
+                    if isinstance(b, dict) and b.get("type") == "tool_use" and b.get("name") == "AskUserQuestion":
+                        return "questioning"
                 # Assistant requested a tool — the next entry should be a
                 # tool_result (type "user").  Since we're scanning from the
                 # end, there is no subsequent tool_result yet → the session
@@ -562,6 +567,17 @@ def detect_session_state(lines: list[str]) -> str:
                 for b in content
             )
             if is_tool_result:
+                # Check if any tool_result contains a tool_reference to AskUserQuestion.
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") == "tool_result":
+                        result_content = block.get("content", [])
+                        if isinstance(result_content, list):
+                            for cb in result_content:
+                                if (isinstance(cb, dict)
+                                    and cb.get("type") == "tool_reference"
+                                    and cb.get("tool_name") == "AskUserQuestion"):
+                                    return "questioning"
+
                 tool_use_ids = set()
                 tool_result_ids = set()
                 for prev_line in lines:
@@ -944,6 +960,10 @@ def collect_sessions() -> dict:
                             status = "subagent"
                         elif activity == "hook":
                             status = "hook"
+                        elif session_state == "questioning":
+                            # AskUserQuestion is blocking — the process is idle waiting
+                            # for user input.  Not a tool approval, so never downgrade.
+                            status = "questioning"
                         elif session_state == "approving":
                             # tool_use in JSONL without tool_result could mean
                             # waiting for user approval OR the tool is currently
@@ -1029,6 +1049,7 @@ def collect_sessions() -> dict:
         sessions = [s for s in sessions if s["status"] not in ("inactive", "unknown")]
 
         status_order = {
+            "questioning": 0,
             "approving": 0,
             "waiting": 1,
             "thinking": 2,

@@ -2,6 +2,7 @@ export type SessionStatus =
 	| "thinking"
 	| "subagent"
 	| "hook"
+	| "questioning"
 	| "approving"
 	| "waiting"
 	| "recent"

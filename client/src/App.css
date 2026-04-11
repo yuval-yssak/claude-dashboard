@@ -15,6 +15,7 @@
 	--subagent: #2dd4bf;
 	--hook: #a3e635;
 	--approving: #fb923c;
+	--questioning: #f472b6;
 	--inactive: #6b7280;
 	--done: #4ade80;
 	--in-progress: #60a5fa;
@@ -155,6 +156,9 @@ body {
 .session-card.status-approving {
 	border-left: 3px solid var(--approving);
 }
+.session-card.status-questioning {
+	border-left: 3px solid var(--questioning);
+}
 .session-card.dead {
 	opacity: 0.6;
 }
@@ -294,6 +298,10 @@ body {
 .status-badge.approving {
 	background: rgba(251, 146, 60, 0.15);
 	color: var(--approving);
+}
+.status-badge.questioning {
+	background: rgba(244, 114, 182, 0.15);
+	color: var(--questioning);
 }
 
 .mode-badge {

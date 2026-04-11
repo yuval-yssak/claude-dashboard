@@ -457,7 +457,7 @@ def get_last_timestamp(lines: list[str]) -> str | None:
     return None
 
 
-def detect_session_state(lines: list[str]) -> str:
+def detect_session_state(lines: list[str], permission_mode: str | None = None) -> str:
     """Determine the conversational state of a live session from its JSONL tail.
 
     Returns one of:
@@ -471,6 +471,10 @@ def detect_session_state(lines: list[str]) -> str:
         "unknown"   – cannot determine (e.g. empty transcript).
     """
     RECENCY_THRESHOLD = 2  # seconds — if newer, assume still streaming
+
+    # In plan mode, whenever Claude has finished responding ("waiting"),
+    # the user is reviewing the plan — show "approving" instead.
+    plan_awaits_approval = (permission_mode == "plan")
 
     # Track whether the most recent non-skipped entry was a local_command
     # system entry — if so, the user message that triggered it should also
@@ -506,11 +510,16 @@ def detect_session_state(lines: list[str]) -> str:
             model = (obj.get("message") or {}).get("model", "")
             if model == "<synthetic>":
                 # Synthetic message is the last real conversational entry —
-                # Claude has finished and is waiting for user input.
+                # Claude has finished. If plan awaits approval, return approving.
+                if plan_awaits_approval:
+                    return "approving"
                 return "waiting"
 
             content = (obj.get("message") or {}).get("content", [])
             if isinstance(content, str):
+                # In plan-awaiting-approval mode, text-only means plan is presented.
+                if plan_awaits_approval:
+                    return "approving"
                 return "waiting"
 
             has_tool_use = any(
@@ -538,6 +547,9 @@ def detect_session_state(lines: list[str]) -> str:
                         return "thinking"  # too recent, probably still streaming
                 except Exception:
                     pass
+            # Text-only assistant message. In plan-awaiting-approval, return approving.
+            if plan_awaits_approval:
+                return "approving"
             return "waiting"
 
         if msg_type == "user":
@@ -617,18 +629,13 @@ def detect_session_state(lines: list[str]) -> str:
     return "unknown"
 
 
-def _last_entry_is_tool_result(lines: list[str]) -> bool:
-    """Check if the last meaningful conversational JSONL entry is a tool_result.
+def _last_entry_is_user(lines: list[str]) -> bool:
+    """Check if the last meaningful conversational JSONL entry is a user message.
 
-    Scans backwards from the end looking for a user message that contains a
-    tool_result block. Multiple user messages can follow a single tool_result
-    (e.g., tool rejection + continuation text), so keep scanning backwards
-    through user messages until finding one with a tool_result or hitting
-    an assistant message.
-
-    Used to distinguish "mid-turn, blocked on approval" from "turn finished,
-    waiting for user input" when the process is alive but idle and the JSONL
-    file hasn't been updated recently.
+    Returns True if the last non-metadata entry is a user message (plain text
+    or tool_result).  When this is the case, Claude is processing the user's
+    input — the idle-JSONL heuristic should not downgrade to "approving"
+    because the idleness is API latency, not a blocked permission prompt.
     """
     skip_types = ("system", "attachment", "file-history-snapshot",
                   "custom-title", "agent-name", "permission-mode")
@@ -666,19 +673,8 @@ def _last_entry_is_tool_result(lines: list[str]) -> bool:
                         break
             if any(text.strip().startswith(tag) for tag in skip_tags):
                 continue
-            # Found a real user entry — check if it contains tool_result
-            if isinstance(content, list):
-                has_tool_result = any(
-                    isinstance(b, dict) and b.get("type") == "tool_result"
-                    for b in content
-                )
-                if has_tool_result:
-                    return True
-                # No tool_result in this user message, keep scanning backwards
-                # (there may be multiple user messages before the tool_result)
-                continue
-            # User message with only string content, no tool_result
-            continue
+            # Found a real user entry (text or tool_result).
+            return True
         # Any other conversational type — stop scanning
         return False
     return False
@@ -969,7 +965,7 @@ def collect_sessions() -> dict:
                     topic = get_session_topic(jsonl_file)
                     last_user_msg = extract_last_user_message(lines)
                     last_assistant_text = extract_last_assistant_text(lines)
-                    session_state = detect_session_state(lines)
+                    session_state = detect_session_state(lines, permission_mode)
 
                     pid_info = pid_map.get(session_id, {})
                     pid = pid_info.get("pid")
@@ -1007,14 +1003,13 @@ def collect_sessions() -> dict:
                                 # If the file was written recently (<10s), Claude is
                                 # likely still working.
                                 #
-                                # Exception: if the last entry is a tool_result, the
-                                # user has already responded to a pending tool_use
-                                # (either approved or rejected). Don't downgrade to
-                                # "approving" — Claude is either processing the
-                                # response or waiting for more input.
-                                last_is_tool_result = _last_entry_is_tool_result(lines)
+                                # Exception: if the last entry is a user message
+                                # (text or tool_result), Claude is processing user
+                                # input — the idleness is API latency, not a
+                                # blocked permission prompt.
+                                last_is_user = _last_entry_is_user(lines)
                                 jsonl_age = time.time() - file_mtime
-                                if jsonl_age > 10 and not last_is_tool_result:
+                                if jsonl_age > 10 and not last_is_user:
                                     # Claude was mid-turn but hasn't written anything
                                     # in >10s while the process is idle — most likely
                                     # blocked on a permission prompt (the pending

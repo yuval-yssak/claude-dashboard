@@ -64,6 +64,25 @@ State priority: `subagent > hook > approving > thinking > waiting > idle > inact
 
 The backend combines JSONL analysis (conversational state) with process tree inspection (activity detection). IDE events from VS Code are filtered out. Messages < 2s old are treated as still streaming.
 
+### Session Sort Order
+
+Sessions are sorted by backend status rank (primary) and `last_activity` descending (secondary):
+
+| Rank | Status | Meaning |
+|------|--------|---------|
+| 0 | `approving` | Waiting for user permission approval |
+| 1 | `waiting` | Claude done, waiting for user reply |
+| 2 | `thinking`, `subagent`, `hook` | Active work — don't leapfrog each other |
+| 3 | `recent` | Dead process, last activity < 5 min ago |
+| 4 | `idle` | Dead process, last activity 5 min – 2 hours ago |
+| — | `inactive`, `unknown` | Filtered out; not displayed |
+
+Within the same rank, sessions maintain relative position by `last_activity` timestamp (newest first).
+
+### Pinned Sessions
+
+Sessions pinned via the UI always appear at the top of their account group. Pinning is protected during server reorders — a pinned session cannot be displaced by other sessions being moved.
+
 ## API Endpoints
 
 - `GET /api/sessions` — full session data

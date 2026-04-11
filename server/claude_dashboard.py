@@ -643,13 +643,12 @@ def _is_plan_approval_pending(lines: list[str]) -> bool:
                 found_plan_mode = True
             # Any permission-mode entry (plan or otherwise) is definitive.
             break
-        # Real assistant activity after the permission-mode entry means
-        # the plan was already approved and Claude continued working.
+        # Any assistant activity after the permission-mode entry means
+        # the plan was already approved/completed.  This includes synthetic
+        # messages (e.g. "No response requested" after session end) — they
+        # indicate the turn finished, so plan approval is not pending.
         if msg_type == "assistant":
-            model = (obj.get("message") or {}).get("model", "")
-            if model != "<synthetic>":
-                return False
-            continue  # skip synthetic entries, keep scanning
+            return False
         # User messages, system entries, etc. — keep scanning past them
         # to find the permission-mode entry.
         continue
@@ -1033,7 +1032,9 @@ def collect_sessions() -> dict:
                                 # Exception: if the last entry is a user message
                                 # (text or tool_result), Claude is processing user
                                 # input — the idleness is API latency, not a
-                                # blocked permission prompt.
+                                # blocked permission prompt.  But if the file is
+                                # very stale (>30s), Claude has almost certainly
+                                # finished processing and is blocked on approval.
                                 last_is_user = _last_entry_is_user(lines)
                                 jsonl_age = time.time() - file_mtime
                                 if jsonl_age > 10 and not last_is_user:
@@ -1043,6 +1044,13 @@ def collect_sessions() -> dict:
                                     # tool_use hasn't been written to JSONL yet).
                                     # If Claude had finished, there'd be a real
                                     # assistant entry making session_state "waiting".
+                                    status = "approving"
+                                elif last_is_user and jsonl_age > 30:
+                                    # Last entry is a user message (text or tool_result)
+                                    # but JSONL hasn't been written to in >30s — Claude
+                                    # likely already processed it and is now blocked on
+                                    # a permission prompt for a new tool_use that hasn't
+                                    # been written to JSONL yet.
                                     status = "approving"
                                 else:
                                     status = "thinking"

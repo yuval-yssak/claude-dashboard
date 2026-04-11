@@ -457,7 +457,7 @@ def get_last_timestamp(lines: list[str]) -> str | None:
     return None
 
 
-def detect_session_state(lines: list[str], permission_mode: str | None = None) -> str:
+def detect_session_state(lines: list[str]) -> str:
     """Determine the conversational state of a live session from its JSONL tail.
 
     Returns one of:
@@ -471,10 +471,6 @@ def detect_session_state(lines: list[str], permission_mode: str | None = None) -
         "unknown"   – cannot determine (e.g. empty transcript).
     """
     RECENCY_THRESHOLD = 2  # seconds — if newer, assume still streaming
-
-    # In plan mode, whenever Claude has finished responding ("waiting"),
-    # the user is reviewing the plan — show "approving" instead.
-    plan_awaits_approval = (permission_mode == "plan")
 
     # Track whether the most recent non-skipped entry was a local_command
     # system entry — if so, the user message that triggered it should also
@@ -510,16 +506,11 @@ def detect_session_state(lines: list[str], permission_mode: str | None = None) -
             model = (obj.get("message") or {}).get("model", "")
             if model == "<synthetic>":
                 # Synthetic message is the last real conversational entry —
-                # Claude has finished. If plan awaits approval, return approving.
-                if plan_awaits_approval:
-                    return "approving"
+                # Claude has finished and is waiting for user input.
                 return "waiting"
 
             content = (obj.get("message") or {}).get("content", [])
             if isinstance(content, str):
-                # In plan-awaiting-approval mode, text-only means plan is presented.
-                if plan_awaits_approval:
-                    return "approving"
                 return "waiting"
 
             has_tool_use = any(
@@ -547,9 +538,6 @@ def detect_session_state(lines: list[str], permission_mode: str | None = None) -
                         return "thinking"  # too recent, probably still streaming
                 except Exception:
                     pass
-            # Text-only assistant message. In plan-awaiting-approval, return approving.
-            if plan_awaits_approval:
-                return "approving"
             return "waiting"
 
         if msg_type == "user":
@@ -965,7 +953,7 @@ def collect_sessions() -> dict:
                     topic = get_session_topic(jsonl_file)
                     last_user_msg = extract_last_user_message(lines)
                     last_assistant_text = extract_last_assistant_text(lines)
-                    session_state = detect_session_state(lines, permission_mode)
+                    session_state = detect_session_state(lines)
 
                     pid_info = pid_map.get(session_id, {})
                     pid = pid_info.get("pid")

@@ -486,6 +486,11 @@ def detect_session_state(lines: list[str]) -> str:
             continue
         msg_type = obj.get("type")
 
+        # Skip metadata-only entries that don't affect state
+        if msg_type in ("file-history-snapshot", "attachment", "custom-title",
+                        "agent-name", "permission-mode"):
+            continue
+
         # system entries with subtype "local_command" mean a slash command
         # was executed.  Mark it so we skip the triggering user message.
         if msg_type == "system" and obj.get("subtype") == "local_command":
@@ -494,13 +499,15 @@ def detect_session_state(lines: list[str]) -> str:
 
         if msg_type == "assistant":
             # Synthetic messages (e.g. "No response requested." after session
-            # resume) are harness-generated, not real Claude output — skip them
-            # so we find the actual last conversational entry.
+            # resume) are harness-generated, not real Claude output — but they
+            # DO indicate Claude has finished responding. If this is the first
+            # conversational entry we encounter (after skipping metadata), return
+            # "waiting" because Claude has wrapped up.
             model = (obj.get("message") or {}).get("model", "")
             if model == "<synthetic>":
-                # Synthetic messages are harness-generated wrap-ups — skip them
-                # and keep scanning backwards to find the real last entry.
-                continue
+                # Synthetic message is the last real conversational entry —
+                # Claude has finished and is waiting for user input.
+                return "waiting"
 
             content = (obj.get("message") or {}).get("content", [])
             if isinstance(content, str):
@@ -613,11 +620,18 @@ def detect_session_state(lines: list[str]) -> str:
 def _last_entry_is_tool_result(lines: list[str]) -> bool:
     """Check if the last meaningful conversational JSONL entry is a tool_result.
 
+    Scans backwards from the end looking for a user message that contains a
+    tool_result block. Multiple user messages can follow a single tool_result
+    (e.g., tool rejection + continuation text), so keep scanning backwards
+    through user messages until finding one with a tool_result or hitting
+    an assistant message.
+
     Used to distinguish "mid-turn, blocked on approval" from "turn finished,
     waiting for user input" when the process is alive but idle and the JSONL
     file hasn't been updated recently.
     """
-    skip_types = ("system", "attachment", "file-history-snapshot")
+    skip_types = ("system", "attachment", "file-history-snapshot",
+                  "custom-title", "agent-name", "permission-mode")
     skip_tags = ("<ide_opened_file>", "<ide_action>", "<ide_closed_file>",
                  "<ide_active_file>", "<ide_selection>",
                  "<local-command-caveat>", "<local-command-stdout>",
@@ -632,6 +646,13 @@ def _last_entry_is_tool_result(lines: list[str]) -> bool:
         msg_type = obj.get("type")
         if msg_type in skip_types:
             continue
+        # Skip synthetic assistant messages (harness-generated wrap-ups)
+        if msg_type == "assistant":
+            model = (obj.get("message") or {}).get("model", "")
+            if model == "<synthetic>":
+                continue
+            # Hit a real assistant message — stop scanning
+            return False
         if msg_type == "user":
             content = (obj.get("message") or {}).get("content", [])
             # Skip IDE/local-command background events
@@ -647,12 +668,18 @@ def _last_entry_is_tool_result(lines: list[str]) -> bool:
                 continue
             # Found a real user entry — check if it contains tool_result
             if isinstance(content, list):
-                return any(
+                has_tool_result = any(
                     isinstance(b, dict) and b.get("type") == "tool_result"
                     for b in content
                 )
-            return False
-        # Any other conversational type (assistant, etc.) — not a tool_result
+                if has_tool_result:
+                    return True
+                # No tool_result in this user message, keep scanning backwards
+                # (there may be multiple user messages before the tool_result)
+                continue
+            # User message with only string content, no tool_result
+            continue
+        # Any other conversational type — stop scanning
         return False
     return False
 
@@ -979,8 +1006,15 @@ def collect_sessions() -> dict:
                                 # processing" from "finished but waiting for input".
                                 # If the file was written recently (<10s), Claude is
                                 # likely still working.
+                                #
+                                # Exception: if the last entry is a tool_result, the
+                                # user has already responded to a pending tool_use
+                                # (either approved or rejected). Don't downgrade to
+                                # "approving" — Claude is either processing the
+                                # response or waiting for more input.
+                                last_is_tool_result = _last_entry_is_tool_result(lines)
                                 jsonl_age = time.time() - file_mtime
-                                if jsonl_age > 10:
+                                if jsonl_age > 10 and not last_is_tool_result:
                                     # Claude was mid-turn but hasn't written anything
                                     # in >10s while the process is idle — most likely
                                     # blocked on a permission prompt (the pending

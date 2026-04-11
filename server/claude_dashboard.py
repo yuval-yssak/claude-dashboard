@@ -498,8 +498,9 @@ def detect_session_state(lines: list[str]) -> str:
             # so we find the actual last conversational entry.
             model = (obj.get("message") or {}).get("model", "")
             if model == "<synthetic>":
-                # Synthetic messages cap a completed session — treat as done.
-                return "waiting"
+                # Synthetic messages are harness-generated wrap-ups — skip them
+                # and keep scanning backwards to find the real last entry.
+                continue
 
             content = (obj.get("message") or {}).get("content", [])
             if isinstance(content, str):

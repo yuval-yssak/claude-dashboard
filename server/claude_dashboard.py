@@ -585,6 +585,53 @@ def detect_session_state(lines: list[str]) -> str:
     return "unknown"
 
 
+def _last_entry_is_tool_result(lines: list[str]) -> bool:
+    """Check if the last meaningful conversational JSONL entry is a tool_result.
+
+    Used to distinguish "mid-turn, blocked on approval" from "turn finished,
+    waiting for user input" when the process is alive but idle and the JSONL
+    file hasn't been updated recently.
+    """
+    skip_types = ("system", "attachment", "file-history-snapshot")
+    skip_tags = ("<ide_opened_file>", "<ide_action>", "<ide_closed_file>",
+                 "<ide_active_file>", "<ide_selection>",
+                 "<local-command-caveat>", "<local-command-stdout>",
+                 "<command-name>", "<command-message>", "<command-args>")
+    for line in reversed(lines):
+        if not line.strip():
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        msg_type = obj.get("type")
+        if msg_type in skip_types:
+            continue
+        if msg_type == "user":
+            content = (obj.get("message") or {}).get("content", [])
+            # Skip IDE/local-command background events
+            text = ""
+            if isinstance(content, str):
+                text = content
+            elif isinstance(content, list):
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") == "text":
+                        text = block.get("text", "")
+                        break
+            if any(text.strip().startswith(tag) for tag in skip_tags):
+                continue
+            # Found a real user entry — check if it contains tool_result
+            if isinstance(content, list):
+                return any(
+                    isinstance(b, dict) and b.get("type") == "tool_result"
+                    for b in content
+                )
+            return False
+        # Any other conversational type (assistant, etc.) — not a tool_result
+        return False
+    return False
+
+
 def get_git_branch(lines: list[str]) -> str | None:
     for line in reversed(lines):
         if "gitBranch" not in line:
@@ -905,7 +952,14 @@ def collect_sessions() -> dict:
                                 # likely still working.
                                 jsonl_age = time.time() - file_mtime
                                 if jsonl_age > 10:
-                                    status = "waiting"
+                                    # If the last conversational entry was a tool_result,
+                                    # Claude was mid-turn and is likely blocked on
+                                    # approval for the next tool (the pending assistant
+                                    # message hasn't been written to JSONL yet).
+                                    if _last_entry_is_tool_result(lines):
+                                        status = "approving"
+                                    else:
+                                        status = "waiting"
                                 else:
                                     status = "thinking"
                             else:

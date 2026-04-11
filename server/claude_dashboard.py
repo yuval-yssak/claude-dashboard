@@ -753,6 +753,63 @@ def _last_entry_is_synthetic(lines: list[str]) -> bool:
     return False
 
 
+def _synthetic_follows_rejection(lines: list[str]) -> bool:
+    """Check if the trailing synthetic message follows a user rejection/interruption.
+
+    When a user rejects a tool call, the JSONL ends with a tool_result
+    error ("The user doesn't want to proceed...") and/or a user text
+    "[Request interrupted by user for tool use]", followed by metadata
+    entries and a synthetic assistant message.  In this case the session
+    is genuinely done — not blocked on a new approval prompt.
+    """
+    skip_types = ("system", "attachment", "file-history-snapshot",
+                  "custom-title", "agent-name", "permission-mode")
+    found_synthetic = False
+    for line in reversed(lines):
+        if not line.strip():
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        msg_type = obj.get("type")
+        if msg_type in skip_types:
+            continue
+        if not found_synthetic:
+            # First real entry should be the synthetic assistant message.
+            if msg_type == "assistant":
+                model = (obj.get("message") or {}).get("model", "")
+                if model == "<synthetic>":
+                    found_synthetic = True
+                    continue
+            return False
+        # Found synthetic — now check what precedes it.
+        if msg_type == "user":
+            content = (obj.get("message") or {}).get("content", [])
+            text = ""
+            if isinstance(content, str):
+                text = content
+            elif isinstance(content, list):
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") == "text":
+                        text = block.get("text", "")
+                        break
+                    if isinstance(block, dict) and block.get("type") == "tool_result" and block.get("is_error"):
+                        rc = block.get("content", "")
+                        reject_text = rc if isinstance(rc, str) else ""
+                        if not reject_text and isinstance(rc, list):
+                            for cb in rc:
+                                if isinstance(cb, dict) and cb.get("type") == "text":
+                                    reject_text = cb.get("text", "")
+                                    break
+                        if "The user doesn't want to proceed" in reject_text:
+                            return True
+            if "[Request interrupted by user for tool use]" in text:
+                return True
+        return False
+    return False
+
+
 def get_git_branch(lines: list[str]) -> str | None:
     for line in reversed(lines):
         if "gitBranch" not in line:
@@ -1111,7 +1168,8 @@ def collect_sessions() -> dict:
                             # Detect this by checking if the "waiting" came from
                             # a synthetic entry on an alive, idle process.
                             if (activity == "idle"
-                                    and _last_entry_is_synthetic(lines)):
+                                    and _last_entry_is_synthetic(lines)
+                                    and not _synthetic_follows_rejection(lines)):
                                 status = "approving"
                             else:
                                 status = "waiting"

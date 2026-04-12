@@ -115,3 +115,37 @@ Sessions pinned via the UI always appear at the top of their account group. Pinn
 ### Comments
 
 Whenever making a code change that is not immediately obvious — e.g. a workaround, a non-obvious flag, a subtle timing dependency, or a platform-specific fix — add a concise inline comment explaining why it is needed. One to three lines is usually enough. Skip comments where the code is self-evident.
+
+### Status Detection Bug Fix Guidelines
+
+Status detection is this project's most bug-prone area. Fixes here routinely cause regressions — fixing "false approving" by tightening a check can cause "missed approving" in a different scenario. Treat every status change as high-risk.
+
+**The whack-a-mole problem.** Status conditions overlap. The detection logic is a priority chain where each branch assumes the ones above it already filtered out certain states. Changing one branch shifts what falls through to branches below it. Never modify a single condition in isolation — read and reason about the full chain first.
+
+**Before committing any status logic change**, manually verify against ALL of these scenarios (not just the one you're fixing):
+- Tool approval pending (user hasn't responded yet)
+- User rejected a tool call
+- User is typing a reply (Claude waiting)
+- Claude is mid-response (thinking/streaming)
+- Subagent running
+- Hook running
+- Session just resumed
+- Plan mode active
+- User interrupted Claude mid-response
+
+**Comment requirements for status fixes.** Every status condition change must have an inline comment explaining: (1) what scenario this handles, and (2) what false status it prevents. Reference the commit hash or bug that motivated the fix. Example:
+```python
+# After tool rejection, the JSONL still has a pending tool_use with no result.
+# Without this check, _detect_session_status returns "approving" instead of "waiting".
+# Fix for: fcedcc5
+```
+
+**Never change status logic without reading the full detection chain.** Open the status detection function, read it top to bottom, and understand which scenarios each branch handles before touching anything.
+
+### Real-Time Constraints
+
+This dashboard is a real-time monitor. The user watches it continuously to know which sessions need attention. Stale or delayed data is a bug — it causes missed approvals and wasted time.
+
+- **No sleep for state settling.** Never use `sleep()` / `time.sleep()` to "wait for state to settle" or "let the file finish writing." Instead, detect the correct state directly from the data. The only acceptable use of sleep/delay is debouncing jitter (e.g., the 500ms file-change debounce).
+- **SSE updates must reflect current state immediately.** Don't batch, delay, or throttle status changes hoping they'll self-correct.
+- **Fix flicker at the source.** If a status flickers between two values, the detection logic has a gap or race. Fix the logic — don't mask it with delays or "sticky" timers that hold the old status.

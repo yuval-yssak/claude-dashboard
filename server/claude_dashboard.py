@@ -420,6 +420,87 @@ def extract_last_assistant_text(lines: list[str]) -> str | None:
     return None
 
 
+def extract_current_activity(lines: list[str]) -> str | None:
+    """Extract a human-readable description of the last tool Claude invoked."""
+    for line in reversed(lines):
+        if '"role":"assistant"' not in line and '"role": "assistant"' not in line:
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if obj.get("type") != "assistant":
+            continue
+        content = (obj.get("message") or {}).get("content", [])
+        if not isinstance(content, list):
+            return None
+        # Find the last tool_use block in this assistant message
+        last_tool = None
+        for block in content:
+            if block.get("type") == "tool_use":
+                last_tool = block
+        if not last_tool:
+            return None
+        name = last_tool.get("name", "")
+        inp = last_tool.get("input", {})
+        if not isinstance(inp, dict):
+            inp = {}
+        return _format_tool_activity(name, inp)
+    return None
+
+
+def _format_tool_activity(name: str, inp: dict) -> str | None:
+    """Map a tool name + input to a short human-readable activity string."""
+    if name == "Edit":
+        fp = inp.get("file_path", "")
+        return f"Editing {_short_path(fp)}" if fp else "Editing a file"
+    if name == "Write":
+        fp = inp.get("file_path", "")
+        return f"Writing {_short_path(fp)}" if fp else "Writing a file"
+    if name == "Read":
+        fp = inp.get("file_path", "")
+        return f"Reading {_short_path(fp)}" if fp else "Reading a file"
+    if name == "Bash":
+        cmd = inp.get("command", "")
+        return f"Running: {cmd[:80]}" if cmd else "Running a command"
+    if name == "Grep":
+        pat = inp.get("pattern", "")
+        return f'Searching for "{pat[:60]}"' if pat else "Searching"
+    if name == "Glob":
+        pat = inp.get("pattern", "")
+        return f"Finding files: {pat[:60]}" if pat else "Finding files"
+    if name == "Agent":
+        desc = inp.get("description", inp.get("prompt", "")[:80])
+        return f"Subagent: {desc[:80]}" if desc else "Running subagent"
+    if name == "Skill":
+        skill = inp.get("skill", "")
+        return f"Using skill: {skill}" if skill else "Using a skill"
+    if name in ("WebFetch", "WebSearch"):
+        return "Browsing web"
+    if name in ("TodoWrite", "TaskCreate", "TaskUpdate"):
+        return "Updating tasks"
+    if name == "AskUserQuestion":
+        return "Asking user a question"
+    # MCP tools: strip mcp__server__prefix to show just the action
+    if name.startswith("mcp__"):
+        parts = name.split("__")
+        short = parts[-1] if len(parts) >= 3 else name
+        return f"Using {short}"
+    return f"Using {name}" if name else None
+
+
+def _short_path(fp: str) -> str:
+    """Shorten an absolute path to ~last 3 segments for display."""
+    if not fp:
+        return fp
+    if fp.startswith("/Users/"):
+        segments = fp.split("/")
+        if len(segments) > 2:
+            fp = "~/" + "/".join(segments[3:])
+    parts = fp.split("/")
+    return "/".join(parts[-3:]) if len(parts) > 3 else fp
+
+
 def get_session_topic(jsonl_path: str) -> str | None:
     try:
         with open(jsonl_path) as f:
@@ -667,6 +748,11 @@ def _is_plan_approval_pending(lines: list[str]) -> bool:
         # messages (e.g. "No response requested" after session end) — they
         # indicate the turn finished, so plan approval is not pending.
         if msg_type == "assistant":
+            # Synthetic messages (e.g. "No response requested." after resume)
+            # are not real assistant activity — skip them.
+            model = (obj.get("message") or {}).get("model", "")
+            if model == "<synthetic>":
+                continue
             return False
         # User messages, system entries, etc. — keep scanning past them
         # to find the permission-mode entry.
@@ -825,14 +911,45 @@ def get_git_branch(lines: list[str]) -> str | None:
 
 
 def get_permission_mode(lines: list[str]) -> str | None:
-    for line in reversed(lines):
+    # When the permission-mode entry says "plan", verify the session is
+    # still in plan mode by checking for write/edit tool_use after it.
+    # Claude Code doesn't always write a permission-mode entry when
+    # exiting plan mode, so assistant messages using editing tools
+    # (Write, Edit, Bash, etc.) imply plan was approved → acceptEdits.
+    # ExitPlanMode is the definitive signal that plan mode ended;
+    # edit tools are a fallback for when no explicit exit was written.
+    PLAN_EXIT_TOOLS = {"Write", "Edit", "Bash", "NotebookEdit", "ExitPlanMode"}
+    for idx in range(len(lines) - 1, -1, -1):
+        line = lines[idx]
         if "permissionMode" not in line:
             continue
         try:
             obj = json.loads(line)
+            if obj.get("type") != "permission-mode":
+                continue
             mode = obj.get("permissionMode")
-            if mode:
+            if not mode:
+                continue
+            if mode != "plan":
                 return mode
+            # Mode is "plan" — check if there are editing tool_use calls
+            # after this entry, which would mean the plan was approved.
+            for later_line in lines[idx + 1:]:
+                try:
+                    later_obj = json.loads(later_line)
+                except json.JSONDecodeError:
+                    continue
+                later_msg = later_obj.get("message", {})
+                if later_msg.get("role") != "assistant":
+                    continue
+                content = later_msg.get("content", [])
+                if not isinstance(content, list):
+                    continue
+                for b in content:
+                    if (isinstance(b, dict) and b.get("type") == "tool_use"
+                            and b.get("name") in PLAN_EXIT_TOOLS):
+                        return "acceptEdits"
+            return "plan"
         except json.JSONDecodeError:
             continue
     return None
@@ -1173,14 +1290,13 @@ def collect_sessions() -> dict:
                                 status = "approving"
                             else:
                                 status = "waiting"
-                        # Plan mode: ExitPlanMode presents a plan for user
-                        # approval — treat as "approving" while alive.
-                        # Only apply when plan approval is actually pending:
-                        # the permission-mode entry says "plan" AND there's
-                        # no real assistant work after it (which would mean
-                        # the plan was already approved and acted on).
-                        if status == "waiting" and _is_plan_approval_pending(lines):
-                            status = "approving"
+                        # Plan mode: the interview UI asks the user
+                        # multi-choice questions — semantically "questioning".
+                        # Only apply when plan is actually pending: the
+                        # permission-mode entry says "plan" AND there's no
+                        # real assistant work after it.
+                        if status in ("waiting", "thinking") and _is_plan_approval_pending(lines):
+                            status = "questioning"
                     elif last_ts:
                         try:
                             dt = datetime.fromisoformat(last_ts.replace("Z", "+00:00"))
@@ -1202,10 +1318,12 @@ def collect_sessions() -> dict:
                     except OSError:
                         file_size = 0
 
-                    # For alive sessions with a stale JSONL, the last user
-                    # message is unreliable (Claude Code buffers writes).
-                    if alive and time.time() - file_mtime > 60:
-                        last_user_msg = None
+                    # When JSONL is stale (>60s), the last user message may
+                    # be from a previous turn — flag it but still show it,
+                    # since a stale message is more useful than nothing.
+                    user_msg_stale = alive and time.time() - file_mtime > 60
+
+                    current_activity = extract_current_activity(lines) if alive else None
 
                     # Merge in user annotations
                     ann = get_annotation(session_id)
@@ -1223,7 +1341,9 @@ def collect_sessions() -> dict:
                         "last_activity_ago": time_ago(last_ts) if last_ts else "unknown",
                         "topic": topic,
                         "last_user_msg": last_user_msg,
+                        "user_msg_stale": user_msg_stale,
                         "last_assistant_text": last_assistant_text,
+                        "current_activity": current_activity,
                         "git_branch": git_branch,
                         "permission_mode": permission_mode,
                         "kind": kind,

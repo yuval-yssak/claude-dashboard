@@ -94,18 +94,24 @@ export const SessionCard = forwardRef<HTMLDivElement, SessionCardProps>(
 						<div className="project-name">{s.project}</div>
 						{s.topic && !s.session_name && <div className="topic">{s.topic}</div>}
 						{s.last_user_msg ? (
-							<div className="last-msg last-user-msg">{s.last_user_msg}</div>
+							<div className={`last-msg last-user-msg${s.user_msg_stale ? " stale" : ""}`}>
+								{s.last_user_msg}
+							</div>
 						) : s.alive ? (
 							<div className="last-msg active-hint">Active session</div>
 						) : null}
-						{s.last_assistant_text && (
+						{s.current_activity && s.alive ? (
+							<div className="last-msg current-activity">
+								{s.current_activity}
+							</div>
+						) : s.last_assistant_text ? (
 							<div
 								className="last-msg last-assistant-text"
 								title={s.last_assistant_text}
 							>
 								{s.last_assistant_text}
 							</div>
-						)}
+						) : null}
 					</div>
 					<div className="card-top-right">
 						<button

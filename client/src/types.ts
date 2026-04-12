@@ -33,6 +33,8 @@ export interface Session {
 	topic: string | null;
 	last_user_msg: string | null;
 	last_assistant_text: string | null;
+	current_activity: string | null;
+	user_msg_stale: boolean;
 	git_branch: string | null;
 	permission_mode: string | null;
 	kind: string;

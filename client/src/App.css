@@ -365,6 +365,14 @@ body {
 .last-msg.active-hint {
 	color: var(--text-dim);
 }
+.last-msg.current-activity {
+	color: #b8e986;
+	font-style: italic;
+	-webkit-line-clamp: 1;
+}
+.last-msg.last-user-msg.stale {
+	opacity: 0.6;
+}
 
 .card-meta {
 	display: flex;

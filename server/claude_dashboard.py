@@ -1334,9 +1334,14 @@ def collect_sessions() -> dict:
                             # prompt whose tool_use hasn't been written yet.
                             # Detect this by checking if the "waiting" came from
                             # a synthetic entry on an alive, idle process.
-                            if (activity == "idle"
-                                    and _last_entry_is_synthetic(lines)
-                                    and not _synthetic_follows_rejection(lines)):
+                            if activity == "idle" and _last_entry_is_synthetic(lines):
+                                # Alive process with idle activity and a synthetic last
+                                # entry means session was resumed and is now blocked on
+                                # approval. The _synthetic_follows_rejection guard from
+                                # fcedcc5 is unnecessary here: after a rejection, Claude
+                                # actively processes the response (activity="thinking"),
+                                # and by the time it settles to idle the JSONL has new
+                                # entries making the synthetic no longer the last entry.
                                 status = "approving"
                             else:
                                 status = "waiting"

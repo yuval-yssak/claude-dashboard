@@ -757,7 +757,33 @@ def _is_plan_approval_pending(lines: list[str]) -> bool:
         # User messages, system entries, etc. — keep scanning past them
         # to find the permission-mode entry.
         continue
-    return found_plan_mode
+    if not found_plan_mode:
+        return False
+    # Plan mode entry found, but it may be a stale re-emission from
+    # session resume.  Check if ExitPlanMode was called — if so, the
+    # plan was already approved and is not pending.
+    # Scan backwards for the most recent plan-lifecycle tool call.
+    for line in reversed(lines):
+        if not line.strip():
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        msg = obj.get("message", {})
+        if msg.get("role") != "assistant":
+            continue
+        content = msg.get("content", [])
+        if not isinstance(content, list):
+            continue
+        for b in content:
+            if isinstance(b, dict) and b.get("type") == "tool_use":
+                if b.get("name") == "ExitPlanMode":
+                    return False
+                if b.get("name") == "EnterPlanMode":
+                    # Re-entered plan mode after exiting — still pending.
+                    return True
+    return True
 
 
 def _last_entry_is_user(lines: list[str]) -> bool:
@@ -949,6 +975,30 @@ def get_permission_mode(lines: list[str]) -> str | None:
                     if (isinstance(b, dict) and b.get("type") == "tool_use"
                             and b.get("name") in PLAN_EXIT_TOOLS):
                         return "acceptEdits"
+            # lines[idx+1:] scan found no exit tools.
+            # On session resume, permission-mode is re-emitted — ExitPlanMode
+            # may precede this entry.  Scan earlier lines for it.
+            # Only check ExitPlanMode (not Write/Edit/Bash) since those could
+            # be from a pre-plan segment.
+            for earlier_line in reversed(lines[:idx]):
+                try:
+                    earlier_obj = json.loads(earlier_line)
+                except json.JSONDecodeError:
+                    continue
+                earlier_msg = earlier_obj.get("message", {})
+                if earlier_msg.get("role") != "assistant":
+                    continue
+                econtent = earlier_msg.get("content", [])
+                if not isinstance(econtent, list):
+                    continue
+                for b in econtent:
+                    if isinstance(b, dict) and b.get("type") == "tool_use":
+                        if b.get("name") == "ExitPlanMode":
+                            return "acceptEdits"
+                        if b.get("name") == "EnterPlanMode":
+                            # Re-entered plan mode — this permission-mode
+                            # entry is for the new plan session, not stale.
+                            return "plan"
             return "plan"
         except json.JSONDecodeError:
             continue

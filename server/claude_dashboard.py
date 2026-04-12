@@ -686,9 +686,14 @@ def detect_session_state(lines: list[str]) -> str:
                         if "The user doesn't want to proceed with this tool use" in reject_text:
                             return "waiting"
 
+                # Only match tool_use IDs from the most recent assistant
+                # turn against subsequent tool_results — scanning all
+                # 2000 tail lines would pick up stale IDs from earlier
+                # turns whose results fell outside the tail window.
+                # Fix for: false "approving" on long sessions.
                 tool_use_ids = set()
                 tool_result_ids = set()
-                for prev_line in lines:
+                for prev_line in reversed(lines):
                     if not prev_line.strip():
                         continue
                     try:
@@ -698,13 +703,15 @@ def detect_session_state(lines: list[str]) -> str:
                     prev_content = (prev.get("message") or {}).get("content", [])
                     if not isinstance(prev_content, list):
                         continue
-                    for b in prev_content:
-                        if not isinstance(b, dict):
-                            continue
-                        if b.get("type") == "tool_use":
-                            tool_use_ids.add(b.get("id"))
-                        elif b.get("type") == "tool_result":
-                            tool_result_ids.add(b.get("tool_use_id"))
+                    if prev.get("type") == "assistant":
+                        for b in prev_content:
+                            if isinstance(b, dict) and b.get("type") == "tool_use":
+                                tool_use_ids.add(b.get("id"))
+                        break  # only the most recent assistant turn
+                    elif prev.get("type") == "user":
+                        for b in prev_content:
+                            if isinstance(b, dict) and b.get("type") == "tool_result":
+                                tool_result_ids.add(b.get("tool_use_id"))
                 if tool_use_ids - tool_result_ids:
                     return "approving"
 
@@ -1553,6 +1560,17 @@ class DashboardHandler(http.server.BaseHTTPRequestHandler):
 
         last_version = 0
         try:
+            # Send current data immediately so new clients don't wait
+            # up to 30s for the first update or keepalive timeout.
+            with _cache_condition:
+                current_version = _cache_version
+                data = _session_cache
+            if current_version > 0 and data:
+                last_version = current_version
+                payload = json.dumps(data)
+                self.wfile.write(f"event: sessions\ndata: {payload}\n\n".encode())
+                self.wfile.flush()
+
             while True:
                 with _cache_condition:
                     # Wait for new data or timeout (keepalive)

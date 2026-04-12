@@ -11,7 +11,7 @@ A live-updating dashboard for monitoring multiple Claude Code sessions across ac
 - **User annotations** — per-session notes and todo lists that persist across restarts
 - **Claude task tracking** — displays Claude's internal TodoWrite tasks with progress bars
 - **Session management** — focus/resume sessions directly from the dashboard
-- **Mobile responsive** — read-only monitoring optimized for phone screens
+- **Mobile responsive** — monitoring optimized for phone screens
 - **PWA installable** — install as a standalone app on desktop or mobile (requires HTTPS)
 - **Background service** — runs as a macOS launchd agent (no terminal required)
 - **Cross-device access** — accessible from any device via Tailscale mesh VPN + HTTPS (Tailscale Serve)

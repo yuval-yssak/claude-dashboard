@@ -1356,15 +1356,18 @@ def collect_sessions() -> dict:
 
         sessions = [s for s in sessions if s["status"] not in ("inactive", "unknown")]
 
+        # Tier 0: all active statuses — equal priority so status changes
+        # within active sessions don't cause cards to swap positions.
+        # Tier 1/2: dead sessions by recency.
         status_order = {
             "questioning": 0,
             "approving": 0,
-            "waiting": 1,
-            "thinking": 2,
-            "subagent": 2,
-            "hook": 2,
-            "recent": 3,
-            "idle": 4,
+            "waiting": 0,
+            "thinking": 0,
+            "subagent": 0,
+            "hook": 0,
+            "recent": 1,
+            "idle": 2,
         }
         sessions.sort(key=lambda s: (
             status_order.get(s["status"], 5),

@@ -41,6 +41,8 @@ export interface Session {
 	todos: ClaudeTodo[] | null;
 	file_size_kb: number;
 	jsonl_path: string;
+	plan_file_path: string | null;
+	plan_file_exists: boolean;
 	user_notes: string;
 	user_todos: UserTodo[];
 }

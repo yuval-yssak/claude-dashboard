@@ -18,3 +18,15 @@ export async function openSession(
 	const resp = await fetch(`/api/open/${sessionId}`, { method: "POST" });
 	return resp.json();
 }
+
+export interface PlanFileResponse {
+	path: string;
+	exists: boolean;
+	content: string;
+}
+
+export async function fetchPlan(sessionId: string): Promise<PlanFileResponse> {
+	const resp = await fetch(`/api/plan/${sessionId}`);
+	if (!resp.ok) throw new Error(`plan fetch failed: ${resp.status}`);
+	return resp.json();
+}

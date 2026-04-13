@@ -2,6 +2,7 @@ import { forwardRef } from "react";
 import type { Session } from "../types";
 import { AnnotationsPanel } from "./AnnotationsPanel";
 import { ClaudeTodos } from "./ClaudeTodos";
+import { PlanViewer } from "./PlanViewer";
 import { StatusBadge } from "./StatusBadge";
 
 interface SessionCardProps {
@@ -87,31 +88,11 @@ export const SessionCard = forwardRef<HTMLDivElement, SessionCardProps>(
 		return (
 			<div ref={ref} className={classes} onKeyDown={handleKeyDown} tabIndex={0}>
 				<div className="card-top">
-					<div>
+					<div className="card-top-title">
 						{s.session_name && (
 							<div className="session-name">{s.session_name}</div>
 						)}
 						<div className="project-name">{s.project}</div>
-						{s.topic && !s.session_name && <div className="topic">{s.topic}</div>}
-						{s.last_user_msg ? (
-							<div className={`last-msg last-user-msg${s.user_msg_stale ? " stale" : ""}`}>
-								{s.last_user_msg}
-							</div>
-						) : s.alive ? (
-							<div className="last-msg active-hint">Active session</div>
-						) : null}
-						{s.current_activity && s.alive ? (
-							<div className="last-msg current-activity">
-								{s.current_activity}
-							</div>
-						) : s.last_assistant_text ? (
-							<div
-								className="last-msg last-assistant-text"
-								title={s.last_assistant_text}
-							>
-								{s.last_assistant_text}
-							</div>
-						) : null}
 					</div>
 					<div className="card-top-right">
 						<button
@@ -159,6 +140,26 @@ export const SessionCard = forwardRef<HTMLDivElement, SessionCardProps>(
 						<StatusBadge status={s.status} />
 					</div>
 				</div>
+				{s.topic && !s.session_name && <div className="topic">{s.topic}</div>}
+				{s.last_user_msg ? (
+					<div className={`last-msg last-user-msg${s.user_msg_stale ? " stale" : ""}`}>
+						{s.last_user_msg}
+					</div>
+				) : s.alive ? (
+					<div className="last-msg active-hint">Active session</div>
+				) : null}
+				{s.current_activity && s.alive ? (
+					<div className="last-msg current-activity">
+						{s.current_activity}
+					</div>
+				) : s.last_assistant_text ? (
+					<div
+						className="last-msg last-assistant-text"
+						title={s.last_assistant_text}
+					>
+						{s.last_assistant_text}
+					</div>
+				) : null}
 				<div className="card-meta">
 					<span>{s.last_activity_ago}</span>
 					{shortCwd && <span title={s.cwd}>{shortCwd}</span>}
@@ -181,6 +182,11 @@ export const SessionCard = forwardRef<HTMLDivElement, SessionCardProps>(
 					</span>
 				</div>
 				<ClaudeTodos todos={s.todos} />
+				<PlanViewer
+					sessionId={s.session_id}
+					planPath={s.plan_file_path}
+					planExists={s.plan_file_exists}
+				/>
 				<AnnotationsPanel
 					session={s}
 					isOpen={isOpen}

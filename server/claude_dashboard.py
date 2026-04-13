@@ -1106,6 +1106,26 @@ def get_permission_mode(lines: list[str]) -> str | None:
     return None
 
 
+def extract_plan_file_path(lines: list[str]) -> str | None:
+    # Plan files are referenced via attachment entries with
+    # type="plan_mode" and a planFilePath field. Scan tail in reverse
+    # to find the most recent one for the session.
+    for line in reversed(lines):
+        if '"plan_mode"' not in line or "planFilePath" not in line:
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        attachment = obj.get("attachment") or {}
+        if attachment.get("type") != "plan_mode":
+            continue
+        path = attachment.get("planFilePath")
+        if isinstance(path, str) and path:
+            return path
+    return None
+
+
 def find_parent_app(pid: int) -> str | None:
     """Walk up the process tree from *pid* to find the owning GUI application."""
     known_apps = {
@@ -1360,6 +1380,8 @@ def collect_sessions() -> dict:
                     todos = extract_last_todo(lines)
                     git_branch = get_git_branch(lines)
                     permission_mode = get_permission_mode(lines)
+                    plan_file_path = extract_plan_file_path(lines)
+                    plan_file_exists = bool(plan_file_path) and os.path.isfile(plan_file_path)
                     topic = get_session_topic(jsonl_file)
                     last_user_msg = extract_last_user_message(lines)
                     last_assistant_text = extract_last_assistant_text(lines)
@@ -1513,6 +1535,8 @@ def collect_sessions() -> dict:
                         "todos": todos,
                         "file_size_kb": round(file_size / 1024, 1),
                         "jsonl_path": jsonl_file,
+                        "plan_file_path": plan_file_path,
+                        "plan_file_exists": plan_file_exists,
                         "user_notes": ann.get("notes", ""),
                         "user_todos": ann.get("todos", []),
                     })
@@ -1556,6 +1580,42 @@ def collect_sessions() -> dict:
 # ---------------------------------------------------------------------------
 
 
+_PLAN_DIR_ALLOWLIST = tuple(
+    os.path.realpath(os.path.join(d, "plans")) + os.sep for d in CONFIG_DIRS
+)
+
+
+def _find_session_in_cache(session_id: str) -> dict | None:
+    data = _get_cache()
+    for acct in data.get("accounts", []):
+        for s in acct.get("sessions", []):
+            if s.get("session_id") == session_id:
+                return s
+    return None
+
+
+def _read_plan_for_session(session_id: str) -> tuple[int, dict]:
+    session = _find_session_in_cache(session_id)
+    if not session:
+        return 404, {"error": "session not found"}
+    plan_path = session.get("plan_file_path")
+    if not plan_path:
+        return 404, {"error": "no plan for session"}
+    # Path-traversal guard: resolve and require the file to live under
+    # one of the configured ~/.claude*/plans/ directories.
+    real = os.path.realpath(plan_path)
+    if not any(real.startswith(prefix) for prefix in _PLAN_DIR_ALLOWLIST):
+        return 403, {"error": "plan path outside allowed directories"}
+    if not os.path.isfile(real):
+        return 200, {"path": plan_path, "exists": False, "content": ""}
+    try:
+        with open(real, encoding="utf-8") as f:
+            content = f.read()
+    except OSError as e:
+        return 500, {"error": str(e)}
+    return 200, {"path": plan_path, "exists": True, "content": content}
+
+
 class DashboardHandler(http.server.BaseHTTPRequestHandler):
 
     def do_GET(self):
@@ -1572,6 +1632,10 @@ class DashboardHandler(http.server.BaseHTTPRequestHandler):
             session_id = parsed.path.split("/api/annotations/", 1)[1]
             ann = get_annotation(session_id)
             self._json_response(200, ann)
+
+        elif parsed.path.startswith("/api/plan/"):
+            session_id = parsed.path.split("/api/plan/", 1)[1]
+            self._json_response(*_read_plan_for_session(session_id))
 
         else:
             # Serve from React build (client/dist/)

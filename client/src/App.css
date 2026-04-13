@@ -129,6 +129,47 @@ body {
 	display: flex;
 	align-items: center;
 	gap: 6px;
+	position: relative;
+}
+.usage-tooltip {
+	z-index: 1000;
+	width: 240px;
+	padding: 10px 12px;
+	background: var(--surface2, #1e1e22);
+	border: 1px solid var(--border, #333);
+	border-radius: 6px;
+	box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+	font-size: 11px;
+	color: var(--text, #ddd);
+	pointer-events: none;
+}
+.usage-tooltip-title {
+	font-weight: 600;
+	margin-bottom: 6px;
+	padding-bottom: 4px;
+	border-bottom: 1px solid var(--border, #333);
+}
+.usage-tooltip-row {
+	display: flex;
+	justify-content: space-between;
+	gap: 12px;
+	padding: 2px 0;
+}
+.usage-tooltip-row > span:first-child {
+	color: var(--text-dim, #888);
+}
+.usage-tooltip-meta {
+	margin-top: 4px;
+	padding-top: 4px;
+	border-top: 1px solid var(--border, #333);
+	font-size: 10px;
+}
+.usage-tooltip-stale {
+	margin-top: 6px;
+	padding-top: 6px;
+	border-top: 1px solid var(--border, #333);
+	color: #e67e22;
+	font-size: 10px;
 }
 .usage-bar-label {
 	font-size: 11px;
@@ -291,11 +332,26 @@ body {
 	outline-offset: 2px;
 }
 
+/* Title (session name + folder) and right-side controls share the top row.
+   They wrap to separate lines on narrow widths. Message lines (topic,
+   last-msg, etc.) render after .card-top and always get full card width. */
 .card-top {
 	display: flex;
+	flex-wrap: wrap;
 	justify-content: space-between;
-	align-items: flex-start;
-	margin-bottom: 8px;
+	align-items: center;
+	gap: 6px 10px;
+	margin-bottom: 6px;
+}
+.card-top-title {
+	flex: 1 1 auto;
+	min-width: 0;
+}
+.session-card .last-msg,
+.session-card .project-name,
+.session-card .session-name,
+.session-card .topic {
+	overflow-wrap: anywhere;
 }
 
 .status-badge {
@@ -412,14 +468,21 @@ body {
 
 .card-meta {
 	display: flex;
-	gap: 16px;
+	gap: 10px 16px;
 	font-size: 11px;
 	color: var(--text-dim);
 	margin-top: 8px;
 	flex-wrap: wrap;
+	min-width: 0;
 }
 .card-meta span {
 	white-space: nowrap;
+	min-width: 0;
+}
+.card-meta .jsonl-link {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	max-width: 100%;
 }
 .card-meta .jsonl-link {
 	color: var(--text-dim);
@@ -428,6 +491,208 @@ body {
 	transition: color 0.15s;
 }
 .card-meta .jsonl-link:hover {
+	color: var(--accent);
+}
+
+/* Plan file viewer */
+.plan-section {
+	margin-top: 12px;
+	padding-top: 10px;
+	border-top: 1px solid var(--border);
+}
+.plan-header {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	width: 100%;
+	background: none;
+	border: none;
+	padding: 0;
+	cursor: pointer;
+	font-size: 11px;
+	font-weight: 600;
+	text-transform: uppercase;
+	letter-spacing: 0.5px;
+	color: var(--text-dim);
+	text-align: left;
+}
+.plan-header:hover {
+	color: var(--accent);
+}
+.plan-caret {
+	font-size: 10px;
+	width: 10px;
+}
+.plan-label {
+	opacity: 0.8;
+}
+.plan-filename {
+	font-family: monospace;
+	text-transform: none;
+	letter-spacing: 0;
+	color: var(--text);
+}
+.plan-missing {
+	color: var(--text-dim);
+	font-style: italic;
+	text-transform: none;
+}
+.plan-body {
+	margin-top: 6px;
+}
+.plan-loading,
+.plan-error,
+.plan-missing-body {
+	font-size: 12px;
+	color: var(--text-dim);
+	padding: 4px 0;
+}
+.plan-error {
+	color: var(--error, #d66);
+}
+.plan-content {
+	font-family: monospace;
+	font-size: 11px;
+	line-height: 1.4;
+	max-height: 300px;
+	overflow-y: auto;
+	white-space: pre-wrap;
+	word-break: break-word;
+	background: var(--bg-dim, rgba(0, 0, 0, 0.2));
+	border: 1px solid var(--border);
+	border-radius: 4px;
+	padding: 8px;
+	margin: 0;
+}
+
+/* Plan file modal */
+.plan-modal-backdrop {
+	position: fixed;
+	inset: 0;
+	background: rgba(0, 0, 0, 0.7);
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	z-index: 1000;
+	padding: 24px;
+}
+.plan-modal {
+	background: var(--bg, #1a1a1a);
+	border: 1px solid var(--border);
+	border-radius: 8px;
+	width: 100%;
+	max-width: 1000px;
+	max-height: calc(100vh - 48px);
+	display: flex;
+	flex-direction: column;
+	box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+}
+.plan-modal-header {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	padding: 14px 20px;
+	border-bottom: 1px solid var(--border);
+}
+.plan-modal-title {
+	flex: 1;
+	font-family: monospace;
+	font-size: 14px;
+	font-weight: 600;
+	color: var(--text);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.plan-modal-close {
+	background: none;
+	border: none;
+	color: var(--text-dim);
+	font-size: 24px;
+	line-height: 1;
+	cursor: pointer;
+	padding: 0 4px;
+}
+.plan-modal-close:hover {
+	color: var(--text);
+}
+.plan-modal-body {
+	flex: 1;
+	overflow-y: auto;
+	padding: 20px 28px;
+}
+.plan-markdown {
+	font-size: 14px;
+	line-height: 1.6;
+	color: var(--text);
+}
+.plan-markdown h1,
+.plan-markdown h2,
+.plan-markdown h3,
+.plan-markdown h4 {
+	margin-top: 1.2em;
+	margin-bottom: 0.5em;
+	color: var(--text);
+}
+.plan-markdown h1 {
+	font-size: 1.6em;
+	border-bottom: 1px solid var(--border);
+	padding-bottom: 0.3em;
+}
+.plan-markdown h2 {
+	font-size: 1.3em;
+	border-bottom: 1px solid var(--border);
+	padding-bottom: 0.2em;
+}
+.plan-markdown h3 {
+	font-size: 1.1em;
+}
+.plan-markdown p {
+	margin: 0.6em 0;
+}
+.plan-markdown ul,
+.plan-markdown ol {
+	margin: 0.6em 0;
+	padding-left: 1.6em;
+}
+.plan-markdown li {
+	margin: 0.2em 0;
+}
+.plan-markdown code {
+	font-family: monospace;
+	font-size: 0.9em;
+	background: var(--bg-dim, rgba(255, 255, 255, 0.08));
+	padding: 1px 5px;
+	border-radius: 3px;
+}
+.plan-markdown pre {
+	background: var(--bg-dim, rgba(0, 0, 0, 0.3));
+	border: 1px solid var(--border);
+	border-radius: 4px;
+	padding: 12px;
+	overflow-x: auto;
+	margin: 0.8em 0;
+}
+.plan-markdown pre code {
+	background: none;
+	padding: 0;
+}
+.plan-markdown blockquote {
+	border-left: 3px solid var(--border);
+	margin: 0.8em 0;
+	padding: 0.2em 0 0.2em 1em;
+	color: var(--text-dim);
+}
+.plan-markdown table {
+	border-collapse: collapse;
+	margin: 0.8em 0;
+}
+.plan-markdown th,
+.plan-markdown td {
+	border: 1px solid var(--border);
+	padding: 6px 10px;
+}
+.plan-markdown a {
 	color: var(--accent);
 }
 
@@ -744,6 +1009,7 @@ body {
 	display: flex;
 	align-items: center;
 	gap: 8px;
+	flex-shrink: 0;
 }
 
 .open-toast {
@@ -834,10 +1100,22 @@ body {
 	.card-top-right {
 		flex-wrap: wrap;
 		justify-content: flex-end;
+		flex-shrink: 0;
 	}
 	.session-card {
 		max-width: 100%;
 		overflow: hidden;
+	}
+	/* Allow long session ids / branch names to break onto the next line on
+	   mobile so the meta row never forces horizontal overflow. */
+	.card-meta {
+		gap: 6px 12px;
+	}
+	.card-meta span,
+	.card-meta .jsonl-link {
+		white-space: normal;
+		overflow-wrap: anywhere;
+		word-break: break-all;
 	}
 }
 

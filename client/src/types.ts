@@ -45,10 +45,23 @@ export interface Session {
 	user_todos: UserTodo[];
 }
 
+export interface RateLimitEntry {
+	used_percentage: number;
+	resets_at: number;
+	is_stale: boolean;
+}
+
+export interface RateLimits {
+	five_hour?: RateLimitEntry;
+	seven_day?: RateLimitEntry;
+	updated_at: number;
+}
+
 export interface Account {
 	email: string;
 	config_dir: string;
 	sessions: Session[];
+	rate_limits: RateLimits | null;
 }
 
 export interface CardPosition {

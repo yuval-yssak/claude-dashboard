@@ -1,24 +1,25 @@
-import { useCallback } from "react";
 import {
-	DndContext,
 	closestCenter,
-	PointerSensor,
+	DndContext,
+	type DragEndEvent,
+	type DragStartEvent,
 	KeyboardSensor,
+	PointerSensor,
 	TouchSensor,
 	useSensor,
 	useSensors,
-	type DragEndEvent,
-	type DragStartEvent,
 } from "@dnd-kit/core";
 import {
-	SortableContext,
 	rectSortingStrategy,
+	SortableContext,
 	useSortable,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+import { useCallback } from "react";
+import { useCardOrdering } from "../hooks/useCardOrdering";
 import type { Account, Session } from "../types";
 import { SessionCard } from "./SessionCard";
-import { useCardOrdering } from "../hooks/useCardOrdering";
+import { UsageBars } from "./UsageBars";
 
 interface AccountSectionProps {
 	account: Account;
@@ -78,9 +79,7 @@ function SortableCard({
 	} = useSortable({ id: session.session_id });
 
 	// Constrain horizontal movement to prevent overflow on mobile
-	const constrainedTransform = transform
-		? { ...transform, x: 0 }
-		: transform;
+	const constrainedTransform = transform ? { ...transform, x: 0 } : transform;
 
 	const style: React.CSSProperties = {
 		transform: CSS.Transform.toString(constrainedTransform),
@@ -138,7 +137,9 @@ export function AccountSection({
 
 	const sensors = useSensors(
 		useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
-		useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 5 } }),
+		useSensor(TouchSensor, {
+			activationConstraint: { delay: 250, tolerance: 5 },
+		}),
 		useSensor(KeyboardSensor),
 	);
 
@@ -160,7 +161,6 @@ export function AccountSection({
 		[reorder, setIsDragging],
 	);
 
-
 	if (account.sessions.length === 0) return null;
 
 	const active = account.sessions.filter(
@@ -178,6 +178,7 @@ export function AccountSection({
 					{account.sessions.length} sessions
 					{active ? ` \u00B7 ${active} active` : ""}
 				</span>
+				<UsageBars rateLimits={account.rate_limits} />
 			</div>
 			<DndContext
 				sensors={sensors}
@@ -185,10 +186,7 @@ export function AccountSection({
 				onDragStart={handleDragStart}
 				onDragEnd={handleDragEnd}
 			>
-				<SortableContext
-					items={orderedIds}
-					strategy={rectSortingStrategy}
-				>
+				<SortableContext items={orderedIds} strategy={rectSortingStrategy}>
 					<div className="session-grid">
 						{orderedSessions.map((s) => (
 							<SortableCard

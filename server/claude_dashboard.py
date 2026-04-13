@@ -160,17 +160,22 @@ def _start_watcher():
 
     class JNLHandler(FileSystemEventHandler):
         def on_modified(self, event):
-            if event.src_path.endswith(".jsonl"):
+            if event.src_path.endswith(".jsonl") or event.src_path.endswith("rate-limits.json"):
                 _debounced_update()
 
         def on_created(self, event):
-            if event.src_path.endswith(".jsonl"):
+            if event.src_path.endswith(".jsonl") or event.src_path.endswith("rate-limits.json"):
                 _debounced_update()
 
     observer = Observer()
     handler = JNLHandler()
     watched = 0
     for config_dir in CONFIG_DIRS:
+        # Watch config dir root for rate-limits.json changes
+        if os.path.isdir(config_dir):
+            observer.schedule(handler, config_dir, recursive=False)
+            watched += 1
+        # Watch projects dir for JSONL changes
         projects_dir = os.path.join(config_dir, "projects")
         if os.path.isdir(projects_dir):
             observer.schedule(handler, projects_dir, recursive=True)
@@ -194,6 +199,36 @@ def read_json(path: str):
             return json.load(f)
     except Exception:
         return None
+
+
+def get_rate_limits(config_dir: str) -> dict | None:
+    """Read rate-limits.json written by the statusline capture script."""
+    path = os.path.join(config_dir, "rate-limits.json")
+    data = read_json(path)
+    if not data:
+        return None
+
+    now = time.time()
+    updated_at = data.get("updated_at", 0)
+    # Data older than 6 hours is stale (five_hour window is 5h, so 6h guarantees expiry)
+    age_stale = (now - updated_at) > 6 * 3600
+
+    result = {}
+    for key in ("five_hour", "seven_day"):
+        entry = data.get(key)
+        if entry:
+            resets_at = entry.get("resets_at", 0)
+            result[key] = {
+                "used_percentage": entry.get("used_percentage", 0),
+                "resets_at": resets_at,
+                "is_stale": age_stale or resets_at < now,
+            }
+
+    if not result:
+        return None
+
+    result["updated_at"] = updated_at
+    return result
 
 
 def get_account_email(config_dir: str) -> str:
@@ -872,6 +907,65 @@ def _last_entry_is_synthetic(lines: list[str]) -> bool:
     return False
 
 
+def _session_has_exit_command(lines: list[str]) -> bool:
+    """Check if the session ended via /exit (or /clear) after its last real turn.
+
+    After /exit, the trailing synthetic "No response requested." is a
+    session-end marker, not a session-resume indicator.  The process may
+    linger (e.g. MCP server children still running), but the session is
+    over — we should NOT apply the alive+idle+synthetic="approving"
+    heuristic in that case.
+
+    Scans backwards from the end, skipping metadata and synthetic
+    assistant messages.  Returns True if a /exit or /clear local-command
+    user entry is found before any real assistant message.
+    """
+    skip_types = ("system", "attachment", "file-history-snapshot",
+                  "custom-title", "agent-name", "permission-mode",
+                  "last-prompt")
+    skip_tags = ("<local-command-caveat>", "<local-command-stdout>",
+                 "<command-message>", "<command-args>",
+                 "<ide_opened_file>", "<ide_action>", "<ide_closed_file>",
+                 "<ide_active_file>", "<ide_selection>")
+    for line in reversed(lines):
+        if not line.strip():
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        msg_type = obj.get("type")
+        if msg_type in skip_types:
+            continue
+        if msg_type == "assistant":
+            # Skip synthetic wrap-ups; stop at any real assistant message.
+            model = (obj.get("message") or {}).get("model", "")
+            if model == "<synthetic>":
+                continue
+            return False
+        if msg_type == "user":
+            content = (obj.get("message") or {}).get("content", [])
+            text = ""
+            if isinstance(content, str):
+                text = content
+            elif isinstance(content, list):
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") == "text":
+                        text = block.get("text", "")
+                        break
+            stripped = text.strip()
+            if ("<command-name>/exit</command-name>" in stripped
+                    or "<command-name>/clear</command-name>" in stripped):
+                return True
+            # Skip other local-command/IDE wrapper entries; keep scanning.
+            if any(stripped.startswith(tag) for tag in skip_tags):
+                continue
+            # Real user message (not /exit, not a wrapper) — session
+            # didn't end here.
+            return False
+    return False
+
+
 def _synthetic_follows_rejection(lines: list[str]) -> bool:
     """Check if the trailing synthetic message follows a user rejection/interruption.
 
@@ -1341,7 +1435,8 @@ def collect_sessions() -> dict:
                             # prompt whose tool_use hasn't been written yet.
                             # Detect this by checking if the "waiting" came from
                             # a synthetic entry on an alive, idle process.
-                            if activity == "idle" and _last_entry_is_synthetic(lines):
+                            if (activity == "idle" and _last_entry_is_synthetic(lines)
+                                    and not _session_has_exit_command(lines)):
                                 # Alive process with idle activity and a synthetic last
                                 # entry means session was resumed and is now blocked on
                                 # approval. The _synthetic_follows_rejection guard from
@@ -1349,6 +1444,12 @@ def collect_sessions() -> dict:
                                 # actively processes the response (activity="thinking"),
                                 # and by the time it settles to idle the JSONL has new
                                 # entries making the synthetic no longer the last entry.
+                                #
+                                # The /exit guard handles sessions that ended cleanly but
+                                # whose process lingers (e.g. MCP server children still
+                                # running).  Without it, exited sessions falsely report
+                                # "approving" because the synthetic session-end marker
+                                # looks like a session-resume wrap-up.
                                 status = "approving"
                             else:
                                 status = "waiting"
@@ -1441,6 +1542,7 @@ def collect_sessions() -> dict:
             "email": email,
             "config_dir": config_dir,
             "sessions": sessions,
+            "rate_limits": get_rate_limits(config_dir),
         })
 
     return {

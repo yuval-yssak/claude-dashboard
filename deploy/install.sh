@@ -12,27 +12,72 @@ echo "======================================"
 echo ""
 
 # 1. Install Python dependencies
-echo "[1/4] Installing Python dependencies..."
+echo "[1/5] Installing Python dependencies..."
 pip3 install -q watchdog
 echo "  Done."
 
 # 2. Install Node dependencies and build client
-echo "[2/4] Building frontend..."
+echo "[2/5] Building frontend..."
 cd "$PROJECT_DIR/client"
 npm install --silent
 npm run build
 echo "  Done."
 
-# 3. Unload existing service if running
+# 3. Configure statusline capture for rate-limit data
+echo "[3/5] Configuring statusline capture..."
+CAPTURE_SCRIPT="$SCRIPT_DIR/statusline-capture.sh"
+chmod +x "$CAPTURE_SCRIPT"
+for config_dir in $(echo "${CLAUDE_CONFIGS:-$HOME/.claude,$HOME/.claude-personal}" | tr ',' ' '); do
+    config_dir="$(eval echo "$config_dir")"  # expand ~
+    settings="$config_dir/settings.json"
+    if [ -d "$config_dir" ]; then
+        python3 -c "
+import json, sys, os
+
+settings_path = '$settings'
+capture_cmd = '$CAPTURE_SCRIPT $config_dir'
+
+# Read existing settings or start fresh
+data = {}
+if os.path.exists(settings_path):
+    with open(settings_path) as f:
+        data = json.load(f)
+
+# Check for existing statusLine
+existing = data.get('statusLine')
+if existing:
+    existing_cmd = existing.get('command', '')
+    if 'statusline-capture.sh' in existing_cmd:
+        print(f'  {settings_path}: already configured')
+        sys.exit(0)
+    else:
+        print(f'  WARNING: {settings_path} has an existing statusLine command:')
+        print(f'    {existing_cmd}')
+        print(f'  Overwriting with dashboard capture script.')
+
+data['statusLine'] = {'type': 'command', 'command': capture_cmd}
+
+tmp = settings_path + '.tmp'
+with open(tmp, 'w') as f:
+    json.dump(data, f, indent=2)
+    f.write('\n')
+os.replace(tmp, settings_path)
+print(f'  {settings_path}: statusLine configured')
+"
+    fi
+done
+echo "  Done."
+
+# 4. Unload existing service if running
 if launchctl list "$PLIST_NAME" &>/dev/null; then
-    echo "[3/4] Stopping existing service..."
+    echo "[4/5] Stopping existing service..."
     launchctl unload "$PLIST_DST" 2>/dev/null || true
 else
-    echo "[3/4] No existing service found."
+    echo "[4/5] No existing service found."
 fi
 
-# 4. Install and load plist
-echo "[4/4] Installing launchd service..."
+# 5. Install and load plist
+echo "[5/5] Installing launchd service..."
 cp "$PLIST_SRC" "$PLIST_DST"
 launchctl load "$PLIST_DST"
 echo "  Done."

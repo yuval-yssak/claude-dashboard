@@ -39,6 +39,8 @@ body {
 	line-height: 1.5;
 	padding: 24px;
 	min-height: 100vh;
+	/* Prevent right-edge card clipping from subpixel rounding on high-DPR displays */
+	overflow-x: hidden;
 }
 
 .header {
@@ -101,6 +103,9 @@ body {
 	align-items: center;
 	gap: 10px;
 	margin-bottom: 16px;
+	/* Allow usage bars to wrap on narrow viewports */
+	flex-wrap: wrap;
+	overflow: hidden;
 }
 .account-email {
 	font-size: 14px;
@@ -113,6 +118,37 @@ body {
 	background: var(--surface2);
 	padding: 2px 8px;
 	border-radius: 10px;
+}
+
+.usage-bars {
+	display: flex;
+	gap: 12px;
+	align-items: center;
+}
+.usage-bar-group {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+.usage-bar-label {
+	font-size: 11px;
+	color: var(--text-dim);
+	white-space: nowrap;
+}
+.usage-bar-track {
+	width: 60px;
+	height: 8px;
+	background: var(--surface2);
+	border-radius: 4px;
+	overflow: hidden;
+}
+.usage-bar-fill {
+	height: 100%;
+	border-radius: 4px;
+	transition: width 0.3s ease;
+}
+.usage-bar-stale {
+	opacity: 0.4;
 }
 
 .session-grid {

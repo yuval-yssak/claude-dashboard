@@ -18,6 +18,9 @@ function App() {
 	const [personalFirst, setPersonalFirst] = useState(
 		() => localStorage.getItem("dashboard-personal-first") === "true",
 	);
+	const [hideInactive, setHideInactive] = useState(
+		() => localStorage.getItem("dashboard-hide-inactive") === "true",
+	);
 	// Force re-render counter for panel toggles
 	const [, setRenderTick] = useState(0);
 	const [connectionStatus, setConnectionStatus] =
@@ -186,27 +189,35 @@ function App() {
 		});
 	}, []);
 
+	const handleToggleHideInactive = useCallback(() => {
+		setHideInactive((prev) => {
+			const next = !prev;
+			localStorage.setItem("dashboard-hide-inactive", String(next));
+			return next;
+		});
+	}, []);
+
 	const filteredAccounts = useMemo(() => {
 		if (!data) return [];
 		const q = searchQuery.trim().toLowerCase();
-		let accounts = q
-			? data.accounts.map((a) => ({
-					...a,
-					sessions: a.sessions.filter(
-						(s) =>
-							(s.session_name || "").toLowerCase().includes(q) ||
-							s.project.toLowerCase().includes(q) ||
-							(s.git_branch || "").toLowerCase().includes(q) ||
-							s.status.toLowerCase().includes(q) ||
-							(s.last_user_msg || "").toLowerCase().includes(q),
-					),
-				}))
-			: data.accounts;
+		const matchesQuery = (s: Session) =>
+			!q ||
+			(s.session_name || "").toLowerCase().includes(q) ||
+			s.project.toLowerCase().includes(q) ||
+			(s.git_branch || "").toLowerCase().includes(q) ||
+			s.status.toLowerCase().includes(q) ||
+			(s.last_user_msg || "").toLowerCase().includes(q);
+		const isActiveTier = (s: Session) =>
+			!hideInactive || (s.status !== "idle" && s.status !== "recent");
+		let accounts = data.accounts.map((a) => ({
+			...a,
+			sessions: a.sessions.filter((s) => matchesQuery(s) && isActiveTier(s)),
+		}));
 		if (personalFirst) {
 			accounts = [...accounts].reverse();
 		}
 		return accounts;
-	}, [data, searchQuery, personalFirst]);
+	}, [data, searchQuery, personalFirst, hideInactive]);
 
 	return (
 		<>
@@ -234,6 +245,23 @@ function App() {
 							{personalFirst ? "Personal" : "Work"}
 						</span>
 						<span className="workspace-toggle-icon">&#x21C5;</span>
+					</button>
+					<button
+						type="button"
+						className={`workspace-toggle ${hideInactive ? "personal" : "work"}`}
+						onClick={handleToggleHideInactive}
+						title={
+							hideInactive
+								? "Hiding idle and recent sessions"
+								: "Showing all sessions"
+						}
+					>
+						<span className="workspace-toggle-label">
+							{hideInactive ? "Active only" : "Show all"}
+						</span>
+						<span className="workspace-toggle-icon">
+							{hideInactive ? "\u25CF" : "\u25CB"}
+						</span>
 					</button>
 				</div>
 			)}

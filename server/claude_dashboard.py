@@ -1106,6 +1106,23 @@ def get_permission_mode(lines: list[str]) -> str | None:
     return None
 
 
+def get_session_title(lines: list[str]) -> str | None:
+    """Extract session title from JSONL: prefer custom-title over ai-title."""
+    for line in reversed(lines):
+        if "custom-title" not in line and "ai-title" not in line:
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        msg_type = obj.get("type")
+        if msg_type == "custom-title":
+            return obj.get("customTitle")
+        if msg_type == "ai-title":
+            return obj.get("aiTitle")
+    return None
+
+
 def extract_plan_file_path(lines: list[str]) -> str | None:
     # Plan files are referenced via attachment entries with
     # type="plan_mode" and a planFilePath field. Scan tail in reverse
@@ -1391,7 +1408,7 @@ def collect_sessions() -> dict:
                     pid = pid_info.get("pid")
                     cwd = pid_info.get("cwd", "")
                     kind = pid_info.get("kind", "")
-                    session_name = pid_info.get("name", "")
+                    session_name = pid_info.get("name", "") or get_session_title(lines) or ""
                     alive = is_pid_alive(pid) if pid else False
 
                     # Also check if the PID (or its parent) is among running claude procs

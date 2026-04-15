@@ -244,13 +244,22 @@ def detect_session_state(lines: list[str]) -> str:
                 return "approving"
 
             # Claude writes thinking and tool_use as two separate JSONL entries.
-            # If the tool_use entry hasn't landed yet but stop_reason=="tool_use"
-            # is already in the thinking entry, we know approval is coming.
-            # Without this check the scanner sees a thinking-only message, returns
-            # "thinking", and the orchestrator waits 10s before promoting to "approving".
-            stop_reason = (obj.get("message") or {}).get("stop_reason", "")
+            # The thinking entry is flushed first, often with stop_reason still
+            # absent — the terminal stop_reason only lands on the tool_use entry.
+            # Fast-path from 4c1b66f (stop_reason == "tool_use") therefore misses
+            # the common case and the scanner falls through to "thinking", hiding
+            # real approvals and AskUserQuestion prompts from the user.
             has_thinking = any(b.get("type") == "thinking" for b in content if isinstance(b, dict))
-            if has_thinking and stop_reason == "tool_use":
+            has_text = any(b.get("type") == "text" for b in content if isinstance(b, dict))
+
+            if has_thinking and not has_text:
+                # Thinking-only entry is never the terminal state of a finished
+                # turn — Claude always follows with text or a tool_use. Default
+                # to "approving" rather than guessing "thinking" by recency: a
+                # brief false-positive that self-corrects on the next JSONL flush
+                # is strictly better than a missed approval/question. Covers both
+                # tool-approval and AskUserQuestion scenarios until the tool_use
+                # entry lands. Fix follows up on 4c1b66f.
                 return "approving"
 
             # Text-only assistant message — might be a split entry that will

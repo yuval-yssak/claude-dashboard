@@ -41,15 +41,21 @@ Python 3 HTTP Server (stdlib http.server + threading)
 ~/.claude/ and ~/.claude-personal/ JSONL files + process tree
 ```
 
-**Backend** (`server/claude_dashboard.py`, single file):
-- Scans JSONL files in `~/.claude/projects/*/` to collect sessions
-- Monitors PIDs, CPU, child processes to determine session liveness and activity
-- Detects session state by analyzing JSONL tail (last 2000 lines): thinking, waiting, approving, idle, etc.
-- Inspects process tree for subagents, hooks, tool execution
-- File watching via watchdog (500ms debounce) + periodic 5s refresh
-- SSE streaming to all connected clients with version-tracked cache
-- Session resumption via AppleScript (Warp tabs, other apps)
-- Persists user annotations (notes/todos) to `claude-dashboard-data.json` with atomic file replace + thread locking
+**Backend** (`server/`, Python 3.10+ stdlib):
+
+The orchestrator lives in `claude_dashboard.py`; pure utilities were extracted into sibling modules. Prefer editing a utility module over growing the orchestrator.
+
+| File | Responsibility | Edit here when… |
+|------|----------------|-----------------|
+| `claude_dashboard.py` | HTTP/SSE server, session collection, **state detection chain**, watchdog loop (500ms debounce + 5s periodic), AppleScript session resume, version-tracked SSE cache | Touching status logic, request handlers, the refresh loop, or SSE broadcasting |
+| `jsonl_scan.py` | Pure JSONL tail parsing — last user/assistant message, TodoWrite todos, current activity, session title, git branch, plan file path, timestamps (scans last 2000 lines) | Adding or changing what gets extracted from JSONL files |
+| `process_monitor.py` | Process tree probing — `is_pid_alive`, `get_descendant_processes`, `detect_activity_state` (CPU + command), `find_all_claude_pids` | Changing how process liveness or activity is detected |
+| `query_helpers.py` | On-disk read helpers — `read_json`, `get_rate_limits`, `get_account_email` | Reading other files out of `~/.claude*` |
+| `annotations.py` | Notes/todos persistence to `claude-dashboard-data.json` with thread lock + atomic replace | Touching annotation storage |
+| `config.py` | Constants — `PORT`, `CONFIG_DIRS`, `ANNOTATIONS_FILE`, debounce/interval/threshold values | Adding a tunable |
+| `utils.py` | Pure formatters — `friendly_project_name`, `time_ago` | Pure display-string helpers |
+
+**Important:** status detection (the "whack-a-mole" area flagged below) lives in `claude_dashboard.py`, not `jsonl_scan.py`. `jsonl_scan.py` only extracts raw data from JSONL; `claude_dashboard.py` interprets it into states like `approving`, `thinking`, `waiting`.
 
 **Frontend** (`client/src/`):
 - `App.tsx` — SSE connection, global state

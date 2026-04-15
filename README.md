@@ -33,12 +33,14 @@ A live-updating dashboard for monitoring multiple Claude Code sessions across ac
                     └───────────┘  └─────────────┘ └─────────────┘
 ```
 
-**Backend** (`server/claude_dashboard.py`): Python stdlib HTTP server (ThreadingHTTPServer) that:
-- Reads session data from `~/.claude/projects/**/*.jsonl` files
-- Watches for file changes using watchdog (macOS FSEvents)
-- Periodically checks process status (PID alive, CPU, child processes)
-- Pushes updates to connected clients via SSE
-- Serves the React SPA from `client/dist/`
+**Backend** (`server/`): Python stdlib `ThreadingHTTPServer`. The orchestrator `claude_dashboard.py` owns session collection, state detection, the watchdog/periodic refresh loop, SSE broadcasting, and serving the React SPA from `client/dist/`. Pure-utility modules sit alongside it:
+
+- `jsonl_scan.py` — tail-parse JSONL files in `~/.claude/projects/**/*.jsonl`
+- `process_monitor.py` — PID liveness, CPU, and process-tree inspection
+- `query_helpers.py` — on-disk reads (rate limits, account email)
+- `annotations.py` — per-session notes/todos persistence (atomic + thread-safe)
+- `config.py` — constants and thresholds
+- `utils.py` — formatting helpers (`friendly_project_name`, `time_ago`)
 
 **Frontend** (`client/`): React 19 + TypeScript + Vite SPA that:
 - Connects to `/api/events` via EventSource for real-time updates
@@ -96,7 +98,13 @@ Then open `https://<machine-name>.<tailnet>.ts.net` on your phone and install as
 ```
 claude-dashboard/
 ├── server/
-│   ├── claude_dashboard.py    # Backend server
+│   ├── claude_dashboard.py    # HTTP/SSE server, session collection, state detection
+│   ├── jsonl_scan.py          # JSONL tail parsing
+│   ├── process_monitor.py     # PID/CPU/process-tree probing
+│   ├── query_helpers.py       # On-disk read helpers (rate limits, account email)
+│   ├── annotations.py         # Notes/todos persistence
+│   ├── config.py              # Constants and thresholds
+│   ├── utils.py               # Pure formatters
 │   ├── requirements.txt       # Python dependencies
 │   └── ruff.toml              # Python linter config
 ├── client/

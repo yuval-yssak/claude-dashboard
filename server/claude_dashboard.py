@@ -643,6 +643,16 @@ def detect_session_state(lines: list[str]) -> str:
                 # is blocked on user approval (or the tool is executing).
                 return "approving"
 
+            # Claude writes thinking and tool_use as two separate JSONL entries.
+            # If the tool_use entry hasn't landed yet but stop_reason=="tool_use"
+            # is already in the thinking entry, we know approval is coming.
+            # Without this check the scanner sees a thinking-only message, returns
+            # "thinking", and the orchestrator waits 10s before promoting to "approving".
+            stop_reason = (obj.get("message") or {}).get("stop_reason", "")
+            has_thinking = any(b.get("type") == "thinking" for b in content if isinstance(b, dict))
+            if has_thinking and stop_reason == "tool_use":
+                return "approving"
+
             # Text-only assistant message — might be a split entry that will
             # be followed by a tool_use.  Check timestamp recency.
             ts = obj.get("timestamp")
@@ -1437,7 +1447,7 @@ def collect_sessions() -> dict:
                                 # (waiting on API HTTP response, no child processes,
                                 # low CPU).  Use JSONL recency to distinguish "still
                                 # processing" from "finished but waiting for input".
-                                # If the file was written recently (<10s), Claude is
+                                # If the file was written recently (<3s), Claude is
                                 # likely still working.
                                 #
                                 # Exception: if the last entry is a user message
@@ -1448,13 +1458,17 @@ def collect_sessions() -> dict:
                                 # finished processing and is blocked on approval.
                                 last_is_user = _last_entry_is_user(lines)
                                 jsonl_age = time.time() - file_mtime
-                                if jsonl_age > 10 and not last_is_user:
+                                if jsonl_age > 3 and not last_is_user:
                                     # Claude was mid-turn but hasn't written anything
-                                    # in >10s while the process is idle — most likely
+                                    # in >3s while the process is idle — most likely
                                     # blocked on a permission prompt (the pending
                                     # tool_use hasn't been written to JSONL yet).
                                     # If Claude had finished, there'd be a real
                                     # assistant entry making session_state "waiting".
+                                    # Reduced from 10s: the stop_reason=="tool_use" check
+                                    # in detect_session_state handles most cases; this is
+                                    # a last-resort fallback for edge cases where the
+                                    # thinking entry's stop_reason wasn't yet available.
                                     status = "approving"
                                 elif last_is_user and jsonl_age > 30:
                                     # Last entry is a user message (text or tool_result)

@@ -7,8 +7,8 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string>/usr/local/bin/python3</string>
-        <string>/Users/yuvalyssak/scripts/claude-dashboard/server/claude_dashboard.py</string>
+        <string>__PYTHON__</string>
+        <string>__SCRIPT__</string>
     </array>
 
     <key>RunAtLoad</key>
@@ -18,10 +18,10 @@
     <true/>
 
     <key>StandardOutPath</key>
-    <string>/Users/yuvalyssak/Library/Logs/claude-dashboard.log</string>
+    <string>__LOG__</string>
 
     <key>StandardErrorPath</key>
-    <string>/Users/yuvalyssak/Library/Logs/claude-dashboard.log</string>
+    <string>__LOG__</string>
 
     <key>EnvironmentVariables</key>
     <dict>

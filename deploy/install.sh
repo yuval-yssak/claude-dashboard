@@ -4,8 +4,11 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 PLIST_NAME="com.yuval.claude-dashboard"
-PLIST_SRC="$SCRIPT_DIR/$PLIST_NAME.plist"
+PLIST_TEMPLATE="$SCRIPT_DIR/$PLIST_NAME.plist.template"
 PLIST_DST="$HOME/Library/LaunchAgents/$PLIST_NAME.plist"
+LOG_FILE="$HOME/Library/Logs/claude-dashboard.log"
+PYTHON_BIN="$(command -v python3)"
+SERVER_SCRIPT="$PROJECT_DIR/server/claude_dashboard.py"
 
 echo "Claude Sessions Dashboard — Install"
 echo "======================================"
@@ -76,9 +79,18 @@ else
     echo "[4/5] No existing service found."
 fi
 
-# 5. Install and load plist
+# 5. Render and load plist
 echo "[5/5] Installing launchd service..."
-cp "$PLIST_SRC" "$PLIST_DST"
+mkdir -p "$(dirname "$LOG_FILE")"
+mkdir -p "$(dirname "$PLIST_DST")"
+# Render the plist template with this machine's paths so the service works
+# regardless of clone location or user. sed uses | as delimiter because the
+# replacement values contain /.
+sed \
+    -e "s|__PYTHON__|$PYTHON_BIN|g" \
+    -e "s|__SCRIPT__|$SERVER_SCRIPT|g" \
+    -e "s|__LOG__|$LOG_FILE|g" \
+    "$PLIST_TEMPLATE" > "$PLIST_DST"
 launchctl load "$PLIST_DST"
 echo "  Done."
 

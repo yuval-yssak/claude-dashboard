@@ -38,63 +38,46 @@ except ImportError:
     HAS_WATCHDOG = False
 
 # ---------------------------------------------------------------------------
-# Configuration
+# Extracted modules — see server/ARCHITECTURE.md (in progress) for the layout.
+# Bare-name re-imports keep the rest of this file working unchanged while the
+# refactor proceeds incrementally.
 # ---------------------------------------------------------------------------
 
-PORT = int(os.environ.get("CLAUDE_DASHBOARD_PORT", 8484))
-
-DEFAULT_CONFIGS = os.environ.get(
-    "CLAUDE_CONFIGS",
-    "~/.claude,~/.claude-personal",
+from annotations import (  # noqa: E402
+    get_annotation,
+    load_annotations,
+    set_annotation,
 )
+from config import (  # noqa: E402
+    ANNOTATIONS_FILE,
+    CONFIG_DIRS,
+    DEBOUNCE_SECONDS,
+    PERIODIC_INTERVAL,
+    PORT,
+    TODO_SCAN_LINES,
+)
+from jsonl_scan import (  # noqa: E402
+    extract_current_activity,
+    extract_last_assistant_text,
+    extract_last_todo,
+    extract_last_user_message,
+    extract_plan_file_path,
+    get_git_branch,
+    get_last_timestamp,
+    get_session_title,
+    get_session_topic,
+    tail_lines,
+)
+from process_monitor import (  # noqa: E402
+    detect_activity_state,
+    find_all_claude_pids,
+    is_pid_alive,
+)
+from query_helpers import get_account_email, get_rate_limits, read_json  # noqa: E402
+from utils import friendly_project_name, time_ago  # noqa: E402
 
-CONFIG_DIRS = [
-    os.path.expanduser(d.strip()) for d in DEFAULT_CONFIGS.split(",")
-]
-
-# How many tail-lines to scan for the latest TodoWrite
-TODO_SCAN_LINES = 2000
-
-# Persistent annotations file (in project root, one level up from server/)
-ANNOTATIONS_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "claude-dashboard-data.json")
-
-# ---------------------------------------------------------------------------
-# Annotations store  (notes + custom todos per session, persisted to JSON)
-# ---------------------------------------------------------------------------
-
-_annotations_lock = threading.Lock()
-_annotations: dict = {}
-
-
-def _load_annotations():
-    global _annotations
-    try:
-        with open(ANNOTATIONS_FILE) as f:
-            _annotations = json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        _annotations = {}
-
-
-def _save_annotations():
-    tmp = ANNOTATIONS_FILE + ".tmp"
-    with open(tmp, "w") as f:
-        json.dump(_annotations, f, indent=2)
-    os.replace(tmp, ANNOTATIONS_FILE)
-
-
-def get_annotation(session_id: str) -> dict:
-    with _annotations_lock:
-        return _annotations.get(session_id, {"notes": "", "todos": []})
-
-
-def set_annotation(session_id: str, data: dict):
-    with _annotations_lock:
-        _annotations[session_id] = data
-        _save_annotations()
-
-
-# Load on startup
-_load_annotations()
+# Load annotations on startup (was _load_annotations() in the monolith).
+load_annotations()
 
 # ---------------------------------------------------------------------------
 # Session cache + SSE broadcast
@@ -126,8 +109,6 @@ def _get_cache() -> dict:
 
 _debounce_timer: threading.Timer | None = None
 _debounce_lock = threading.Lock()
-DEBOUNCE_SECONDS = 0.5
-PERIODIC_INTERVAL = 5  # seconds — for PID/activity checks
 
 
 def _debounced_update():
@@ -188,389 +169,8 @@ def _start_watcher():
         print("  [info] no project dirs found to watch")
 
 
-# ---------------------------------------------------------------------------
-# Data helpers
-# ---------------------------------------------------------------------------
-
-
-def read_json(path: str):
-    try:
-        with open(path) as f:
-            return json.load(f)
-    except Exception:
-        return None
-
-
-def get_rate_limits(config_dir: str) -> dict | None:
-    """Read rate-limits.json written by the statusline capture script."""
-    path = os.path.join(config_dir, "rate-limits.json")
-    data = read_json(path)
-    if not data:
-        return None
-
-    now = time.time()
-    updated_at = data.get("updated_at", 0)
-    # Data older than 6 hours is stale (five_hour window is 5h, so 6h guarantees expiry)
-    age_stale = (now - updated_at) > 6 * 3600
-
-    result = {}
-    for key in ("five_hour", "seven_day"):
-        entry = data.get(key)
-        if entry:
-            resets_at = entry.get("resets_at", 0)
-            result[key] = {
-                "used_percentage": entry.get("used_percentage", 0),
-                "resets_at": resets_at,
-                "is_stale": age_stale or resets_at < now,
-            }
-
-    if not result:
-        return None
-
-    result["updated_at"] = updated_at
-    return result
-
-
-def get_account_email(config_dir: str) -> str:
-    # Try both possible config filenames
-    for name in ("claude.json", ".claude.json"):
-        cfg = read_json(os.path.join(config_dir, name))
-        if cfg and "oauthAccount" in cfg:
-            return cfg["oauthAccount"].get("emailAddress", "unknown")
-    return os.path.basename(config_dir)
-
-
-def is_pid_alive(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-    except (ProcessLookupError, PermissionError, OSError):
-        return False
-    # Guard against PID reuse: verify the process is actually Claude Code
-    try:
-        result = subprocess.run(
-            ["ps", "-p", str(pid), "-o", "command="],
-            capture_output=True, text=True, timeout=3,
-        )
-        cmd = result.stdout.strip().lower()
-        return "claude" in cmd or "anthropic" in cmd
-    except Exception:
-        return True  # if we can't check, assume alive
-
-
-def get_descendant_processes(pid: int) -> list[dict]:
-    """Recursively get all descendant processes with pid, cpu, and command."""
-    descendants = []
-    try:
-        result = subprocess.run(
-            ["pgrep", "-P", str(pid)],
-            capture_output=True, text=True, timeout=5,
-        )
-        child_pids = [int(p) for p in result.stdout.strip().split("\n") if p.strip()]
-    except Exception:
-        return descendants
-
-    for cpid in child_pids:
-        try:
-            info = subprocess.run(
-                ["ps", "-p", str(cpid), "-o", "pid=,pcpu=,command="],
-                capture_output=True, text=True, timeout=5,
-            )
-            line = info.stdout.strip()
-            if line:
-                parts = line.split(None, 2)
-                if len(parts) >= 3:
-                    descendants.append({
-                        "pid": int(parts[0]),
-                        "cpu": float(parts[1]),
-                        "command": parts[2],
-                    })
-                elif len(parts) == 2:
-                    descendants.append({
-                        "pid": int(parts[0]),
-                        "cpu": float(parts[1]),
-                        "command": "",
-                    })
-        except Exception:
-            pass
-        descendants.extend(get_descendant_processes(cpid))
-
-    return descendants
-
-
-def detect_activity_state(pid: int) -> str:
-    """For a live session, determine actual activity from process tree.
-
-    Returns: 'subagent' | 'hook' | 'thinking' | 'idle'
-    """
-    descendants = get_descendant_processes(pid)
-
-    # Filter out noise processes (caffeinate, sleep, MCP servers, etc.)
-    noise = ("caffeinate", "sleep")
-    mcp_patterns = ("mcp-", "mcp_", "mongodb-mcp", "mcp-server", "mcp-gsheets",
-                    "npx -y mongodb-mcp", "npm exec mcp", "op run -- npx")
-    def is_noise(cmd: str) -> bool:
-        low = cmd.lower()
-        if any(n in low for n in noise):
-            return True
-        if any(p in low for p in mcp_patterns):
-            return True
-        return False
-    meaningful = [d for d in descendants if not is_noise(d["command"])]
-
-    # Check descendant commands for patterns
-    hook_patterns = ("post-change", "hook", "biome", "tsc", "vitest", "eslint", "lint", "prettier", "pre-commit")
-    for d in meaningful:
-        cmd = d["command"].lower()
-        # Subagent: another claude process spawned as child
-        if "claude" in cmd:
-            return "subagent"
-
-    for d in meaningful:
-        cmd = d["command"].lower()
-        for pattern in hook_patterns:
-            if pattern in cmd:
-                return "hook"
-
-    # If there are meaningful descendants that didn't match known patterns,
-    # they're likely tool executions (bash, node scripts, etc.) — active work
-    if meaningful:
-        return "thinking"
-
-    # No meaningful descendants — check main process CPU
-    try:
-        info = subprocess.run(
-            ["ps", "-p", str(pid), "-o", "pcpu="],
-            capture_output=True, text=True, timeout=5,
-        )
-        main_cpu = float(info.stdout.strip()) if info.stdout.strip() else 0.0
-        if main_cpu > 5.0:
-            return "thinking"
-    except Exception:
-        pass
-
-    return "idle"
-
-
-def find_all_claude_pids() -> set[int]:
-    """Find all running claude/node processes that look like Claude Code sessions."""
-    pids = set()
-    try:
-        result = subprocess.run(
-            ["ps", "aux"], capture_output=True, text=True, timeout=5,
-        )
-        for line in result.stdout.split("\n"):
-            if "claude" in line.lower() and ("node" in line or "claude" in line):
-                parts = line.split()
-                if len(parts) > 1:
-                    try:
-                        pids.add(int(parts[1]))
-                    except ValueError:
-                        pass
-    except Exception:
-        pass
-    return pids
-
-
-def tail_lines(path: str, n: int = TODO_SCAN_LINES) -> list[str]:
-    """Read the last *n* lines of a file by seeking from the end in chunks."""
-    chunk_size = 65536  # 64 KB
-    try:
-        with open(path, "rb") as f:
-            f.seek(0, 2)  # seek to end
-            size = f.tell()
-            if size == 0:
-                return []
-            buf = b""
-            pos = size
-            while pos > 0:
-                read_size = min(chunk_size, pos)
-                pos -= read_size
-                f.seek(pos)
-                buf = f.read(read_size) + buf
-                if buf.count(b"\n") > n:
-                    break
-            lines = buf.decode("utf-8", errors="replace").split("\n")
-            # Strip trailing empty element from final newline
-            if lines and not lines[-1]:
-                lines = lines[:-1]
-            return lines[-n:]
-    except Exception:
-        return []
-
-
-def extract_last_todo(lines: list[str]) -> list[dict] | None:
-    for line in reversed(lines):
-        if "TodoWrite" not in line:
-            continue
-        try:
-            obj = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        content = (obj.get("message") or {}).get("content", [])
-        if isinstance(content, str):
-            continue
-        for block in content:
-            if block.get("type") == "tool_use" and block.get("name") == "TodoWrite":
-                todos = block.get("input", {}).get("todos", [])
-                if todos:
-                    return todos
-    return None
-
-
-def extract_last_user_message(lines: list[str]) -> str | None:
-    for line in reversed(lines):
-        if '"role":"user"' not in line and '"role": "user"' not in line:
-            continue
-        try:
-            obj = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if obj.get("type") != "user":
-            continue
-        content = (obj.get("message") or {}).get("content", [])
-        if isinstance(content, str):
-            return content[:200]
-        for block in content:
-            if block.get("type") == "text" and block.get("text", "").strip():
-                return block["text"].strip()[:200]
-    return None
-
-
-def extract_last_assistant_text(lines: list[str]) -> str | None:
-    for line in reversed(lines):
-        if '"role":"assistant"' not in line and '"role": "assistant"' not in line:
-            continue
-        try:
-            obj = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if obj.get("type") != "assistant":
-            continue
-        content = (obj.get("message") or {}).get("content", [])
-        if isinstance(content, str):
-            return content[:500]
-        for block in reversed(content if isinstance(content, list) else []):
-            if block.get("type") == "text" and block.get("text", "").strip():
-                return block["text"].strip()[:500]
-    return None
-
-
-def extract_current_activity(lines: list[str]) -> str | None:
-    """Extract a human-readable description of the last tool Claude invoked."""
-    for line in reversed(lines):
-        if '"role":"assistant"' not in line and '"role": "assistant"' not in line:
-            continue
-        try:
-            obj = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if obj.get("type") != "assistant":
-            continue
-        content = (obj.get("message") or {}).get("content", [])
-        if not isinstance(content, list):
-            return None
-        # Find the last tool_use block in this assistant message
-        last_tool = None
-        for block in content:
-            if block.get("type") == "tool_use":
-                last_tool = block
-        if not last_tool:
-            return None
-        name = last_tool.get("name", "")
-        inp = last_tool.get("input", {})
-        if not isinstance(inp, dict):
-            inp = {}
-        return _format_tool_activity(name, inp)
-    return None
-
-
-def _format_tool_activity(name: str, inp: dict) -> str | None:
-    """Map a tool name + input to a short human-readable activity string."""
-    if name == "Edit":
-        fp = inp.get("file_path", "")
-        return f"Editing {_short_path(fp)}" if fp else "Editing a file"
-    if name == "Write":
-        fp = inp.get("file_path", "")
-        return f"Writing {_short_path(fp)}" if fp else "Writing a file"
-    if name == "Read":
-        fp = inp.get("file_path", "")
-        return f"Reading {_short_path(fp)}" if fp else "Reading a file"
-    if name == "Bash":
-        cmd = inp.get("command", "")
-        return f"Running: {cmd[:80]}" if cmd else "Running a command"
-    if name == "Grep":
-        pat = inp.get("pattern", "")
-        return f'Searching for "{pat[:60]}"' if pat else "Searching"
-    if name == "Glob":
-        pat = inp.get("pattern", "")
-        return f"Finding files: {pat[:60]}" if pat else "Finding files"
-    if name == "Agent":
-        desc = inp.get("description", inp.get("prompt", "")[:80])
-        return f"Subagent: {desc[:80]}" if desc else "Running subagent"
-    if name == "Skill":
-        skill = inp.get("skill", "")
-        return f"Using skill: {skill}" if skill else "Using a skill"
-    if name in ("WebFetch", "WebSearch"):
-        return "Browsing web"
-    if name in ("TodoWrite", "TaskCreate", "TaskUpdate"):
-        return "Updating tasks"
-    if name == "AskUserQuestion":
-        return "Asking user a question"
-    # MCP tools: strip mcp__server__prefix to show just the action
-    if name.startswith("mcp__"):
-        parts = name.split("__")
-        short = parts[-1] if len(parts) >= 3 else name
-        return f"Using {short}"
-    return f"Using {name}" if name else None
-
-
-def _short_path(fp: str) -> str:
-    """Shorten an absolute path to ~last 3 segments for display."""
-    if not fp:
-        return fp
-    if fp.startswith("/Users/"):
-        segments = fp.split("/")
-        if len(segments) > 2:
-            fp = "~/" + "/".join(segments[3:])
-    parts = fp.split("/")
-    return "/".join(parts[-3:]) if len(parts) > 3 else fp
-
-
-def get_session_topic(jsonl_path: str) -> str | None:
-    try:
-        with open(jsonl_path) as f:
-            for line in f:
-                if '"role":"user"' not in line and '"role": "user"' not in line:
-                    continue
-                try:
-                    obj = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if obj.get("type") != "user":
-                    continue
-                content = (obj.get("message") or {}).get("content", [])
-                if isinstance(content, str):
-                    return content[:200]
-                for block in content:
-                    if block.get("type") == "text" and block.get("text", "").strip():
-                        return block["text"].strip()[:200]
-    except Exception:
-        pass
-    return None
-
-
-def get_last_timestamp(lines: list[str]) -> str | None:
-    for line in reversed(lines):
-        if not line.strip():
-            continue
-        try:
-            obj = json.loads(line)
-            ts = obj.get("timestamp")
-            if ts:
-                return ts
-        except json.JSONDecodeError:
-            continue
-    return None
+# Data helpers, process monitoring, and JSONL scanning live in
+# query_helpers.py, process_monitor.py, and jsonl_scan.py respectively.
 
 
 def detect_session_state(lines: list[str]) -> str:
@@ -1076,20 +676,6 @@ def _synthetic_follows_rejection(lines: list[str]) -> bool:
     return False
 
 
-def get_git_branch(lines: list[str]) -> str | None:
-    for line in reversed(lines):
-        if "gitBranch" not in line:
-            continue
-        try:
-            obj = json.loads(line)
-            branch = obj.get("gitBranch")
-            if branch:
-                return branch
-        except json.JSONDecodeError:
-            continue
-    return None
-
-
 def get_permission_mode_info(lines: list[str]) -> dict:
     """Return structured permission-mode info.
 
@@ -1215,43 +801,6 @@ def get_permission_mode(lines: list[str]) -> str | None:
     """
     info = get_permission_mode_info(lines)
     return info["observed"] or info["inferred"]
-
-
-def get_session_title(lines: list[str]) -> str | None:
-    """Extract session title from JSONL: prefer custom-title over ai-title."""
-    for line in reversed(lines):
-        if "custom-title" not in line and "ai-title" not in line:
-            continue
-        try:
-            obj = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        msg_type = obj.get("type")
-        if msg_type == "custom-title":
-            return obj.get("customTitle")
-        if msg_type == "ai-title":
-            return obj.get("aiTitle")
-    return None
-
-
-def extract_plan_file_path(lines: list[str]) -> str | None:
-    # Plan files are referenced via attachment entries with
-    # type="plan_mode" and a planFilePath field. Scan tail in reverse
-    # to find the most recent one for the session.
-    for line in reversed(lines):
-        if '"plan_mode"' not in line or "planFilePath" not in line:
-            continue
-        try:
-            obj = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        attachment = obj.get("attachment") or {}
-        if attachment.get("type") != "plan_mode":
-            continue
-        path = attachment.get("planFilePath")
-        if isinstance(path, str) and path:
-            return path
-    return None
 
 
 def find_parent_app(pid: int) -> str | None:
@@ -1414,41 +963,6 @@ def open_session(session_id: str, config_dir: str, pid: int | None, alive: bool,
         return {"ok": True, "action": "resumed", "detail": "Resuming in new Warp tab"}
     except Exception as e:
         return {"ok": False, "action": "error", "detail": str(e)}
-
-
-def friendly_project_name(dir_name: str) -> str:
-    if dir_name.startswith("-sessions-"):
-        raw = dir_name[len("-sessions-"):]
-    else:
-        raw = dir_name
-    path = "/" + raw.replace("-", "/")
-    # Collapse double slash and replace home dir with ~
-    path = path.replace("//", "/")
-    home = os.path.expanduser("~")
-    if path.startswith(home):
-        path = "~" + path[len(home):]
-    return path
-
-
-def time_ago(iso_ts: str) -> str:
-    try:
-        dt = datetime.fromisoformat(iso_ts.replace("Z", "+00:00"))
-        delta = datetime.now(timezone.utc) - dt
-        secs = int(delta.total_seconds())
-        if secs < 0:
-            return "just now"
-        if secs < 60:
-            return f"{secs}s ago"
-        mins = secs // 60
-        if mins < 60:
-            return f"{mins}m ago"
-        hours = mins // 60
-        if hours < 24:
-            return f"{hours}h ago"
-        days = hours // 24
-        return f"{days}d ago"
-    except Exception:
-        return "unknown"
 
 
 def collect_sessions() -> dict:

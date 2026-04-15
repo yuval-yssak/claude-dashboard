@@ -34,6 +34,7 @@ interface AccountSectionProps {
 	onToggleTodo: (sessionId: string, index: number, done: boolean) => void;
 	onAddTodo: (sessionId: string, text: string) => void;
 	onDeleteTodo: (sessionId: string, index: number) => void;
+	onCopyPath: (message: string) => void;
 }
 
 interface SortableCardProps {
@@ -57,6 +58,7 @@ interface SortableCardProps {
 	onToggleTodo: (i: number, d: boolean) => void;
 	onAddTodo: (t: string) => void;
 	onDeleteTodo: (i: number) => void;
+	onCopyPath: (message: string) => void;
 }
 
 function SortableCard({
@@ -127,6 +129,7 @@ export function AccountSection({
 	onToggleTodo,
 	onAddTodo,
 	onDeleteTodo,
+	onCopyPath,
 }: AccountSectionProps) {
 	const {
 		orderedSessions,
@@ -220,6 +223,7 @@ export function AccountSection({
 								onToggleTodo={(i, d) => onToggleTodo(s.session_id, i, d)}
 								onAddTodo={(t) => onAddTodo(s.session_id, t)}
 								onDeleteTodo={(i) => onDeleteTodo(s.session_id, i)}
+								onCopyPath={onCopyPath}
 							/>
 						))}
 					</div>

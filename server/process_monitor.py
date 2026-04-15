@@ -88,9 +88,15 @@ def detect_activity_state(pid: int) -> str:
     # Check descendant commands for patterns
     hook_patterns = ("post-change", "hook", "biome", "tsc", "vitest", "eslint", "lint", "prettier", "pre-commit")
     for d in meaningful:
-        cmd = d["command"].lower()
-        # Subagent: another claude process spawned as child
-        if "claude" in cmd:
+        cmd = d["command"]
+        # Subagent: another claude process spawned as child. Match only when
+        # "claude" is the actual executable (first token's basename), not any
+        # substring — otherwise the zsh Bash-tool wrapper sources shell
+        # snapshots from ~/.claude/shell-snapshots/..., and the "claude" in
+        # the path falsely flagged every Bash tool call as a subagent.
+        first_token = cmd.split()[0] if cmd.split() else ""
+        exe = first_token.rsplit("/", 1)[-1].lower()
+        if exe == "claude":
             return "subagent"
 
     for d in meaningful:
@@ -104,7 +110,7 @@ def detect_activity_state(pid: int) -> str:
     if meaningful:
         return "thinking"
 
-    # No meaningful descendants — check main process CPU
+    # No meaningful descendants — check main process CPU.
     try:
         info = subprocess.run(
             ["ps", "-p", str(pid), "-o", "pcpu="],

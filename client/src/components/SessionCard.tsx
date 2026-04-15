@@ -2,6 +2,7 @@ import { forwardRef } from "react";
 import type { Session } from "../types";
 import { AnnotationsPanel } from "./AnnotationsPanel";
 import { ClaudeTodos } from "./ClaudeTodos";
+import { CopyPathBadge } from "./CopyPathBadge";
 import { ModeBadge } from "./ModeBadge";
 import { PlanViewer } from "./PlanViewer";
 import { StatusBadge } from "./StatusBadge";
@@ -23,6 +24,7 @@ interface SessionCardProps {
 	isPendingMove?: boolean;
 	onTogglePin?: () => void;
 	onMoveCard?: (direction: "up" | "down" | "left" | "right") => void;
+	onCopyPath: (message: string) => void;
 	dragHandleProps?: Record<string, unknown>;
 }
 
@@ -45,6 +47,7 @@ export const SessionCard = forwardRef<HTMLDivElement, SessionCardProps>(
 			isPendingMove,
 			onTogglePin,
 			onMoveCard,
+			onCopyPath,
 			dragHandleProps,
 		},
 		ref,
@@ -187,16 +190,11 @@ export const SessionCard = forwardRef<HTMLDivElement, SessionCardProps>(
 					{s.git_branch && <span>branch: {s.git_branch}</span>}
 					<ModeBadge info={s.permission_mode_info} strict={strictUnknown} />
 					<span>{s.file_size_kb} KB</span>
-					<span
-						className="jsonl-link"
-						title={`${s.jsonl_path}\n(click to copy)`}
-						onClick={(e) => {
-							e.stopPropagation();
-							navigator.clipboard.writeText(s.jsonl_path);
-						}}
-					>
-						{s.session_id}
-					</span>
+					<CopyPathBadge
+						sessionId={s.session_id}
+						jsonlPath={s.jsonl_path}
+						onCopied={onCopyPath}
+					/>
 				</div>
 				<ClaudeTodos todos={s.todos} />
 				<PlanViewer

@@ -369,6 +369,137 @@ def detect_session_state(lines: list[str]) -> str:
     return "unknown"
 
 
+def get_pending_tool_name(lines: list[str]) -> str | None:
+    """Return the name of the tool_use the session is currently blocked on, or None.
+
+    Returns "<unknown-pending>" when stop_reason=="tool_use" on the last
+    assistant entry but the tool_use block has not yet been written to JSONL.
+
+    Used by the priority chain to distinguish a Task-subagent wait (keep
+    "subagent") from a parent-side approval prompt while a child claude is
+    alive (promote to "approving").
+    """
+    saw_local_command = False
+
+    for line in reversed(lines):
+        if not line.strip():
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        msg_type = obj.get("type")
+
+        if msg_type in ("file-history-snapshot", "attachment", "custom-title",
+                        "agent-name", "permission-mode"):
+            continue
+
+        if msg_type == "system" and obj.get("subtype") == "local_command":
+            saw_local_command = True
+            continue
+
+        if msg_type == "assistant":
+            message = obj.get("message") or {}
+            if message.get("model") == "<synthetic>":
+                return None
+
+            content = message.get("content", [])
+            if isinstance(content, str):
+                return None
+
+            # Assistant has real tool_use blocks — return the first non-AskUserQuestion
+            # tool name (questioning is handled by the questioning branch earlier).
+            for b in content:
+                if isinstance(b, dict) and b.get("type") == "tool_use":
+                    name = b.get("name")
+                    if name and name != "AskUserQuestion":
+                        return name
+
+            # Thinking-only message but stop_reason=="tool_use": the tool_use
+            # block hasn't been written yet. Mirrors detect_session_state L253.
+            has_thinking = any(b.get("type") == "thinking" for b in content if isinstance(b, dict))
+            if has_thinking and message.get("stop_reason") == "tool_use":
+                return "<unknown-pending>"
+
+            return None
+
+        if msg_type == "user":
+            message = obj.get("message") or {}
+            content = message.get("content", [])
+            text = ""
+            if isinstance(content, str):
+                text = content
+            elif isinstance(content, list):
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") == "text":
+                        text = block.get("text", "")
+                        break
+            skip_tags = ("<ide_opened_file>", "<ide_action>", "<ide_closed_file>",
+                         "<ide_active_file>", "<ide_selection>",
+                         "<local-command-caveat>", "<local-command-stdout>",
+                         "<command-name>", "<command-message>", "<command-args>")
+            if any(text.strip().startswith(tag) for tag in skip_tags):
+                continue
+            if saw_local_command:
+                saw_local_command = False
+                continue
+            if text.strip() == "[Request interrupted by user for tool use]":
+                return None
+
+            is_tool_result = isinstance(content, list) and any(
+                isinstance(b, dict) and b.get("type") == "tool_result"
+                for b in content
+            )
+            if is_tool_result:
+                # Rejection: no pending approval.
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") == "tool_result" and block.get("is_error"):
+                        rc = block.get("content", "")
+                        reject_text = rc if isinstance(rc, str) else ""
+                        if not reject_text and isinstance(rc, list):
+                            for cb in rc:
+                                if isinstance(cb, dict) and cb.get("type") == "text":
+                                    reject_text = cb.get("text", "")
+                                    break
+                        if "The user doesn't want to proceed with this tool use" in reject_text:
+                            return None
+
+                # Parallel tool calls: some results missing. Find the first
+                # unmatched tool_use in the most-recent assistant turn.
+                tool_use_blocks: list[dict] = []
+                tool_result_ids: set[str] = set()
+                for prev_line in reversed(lines):
+                    if not prev_line.strip():
+                        continue
+                    try:
+                        prev = json.loads(prev_line)
+                    except json.JSONDecodeError:
+                        continue
+                    prev_content = (prev.get("message") or {}).get("content", [])
+                    if not isinstance(prev_content, list):
+                        continue
+                    if prev.get("type") == "assistant":
+                        for b in prev_content:
+                            if isinstance(b, dict) and b.get("type") == "tool_use":
+                                tool_use_blocks.append(b)
+                        break
+                    elif prev.get("type") == "user":
+                        for b in prev_content:
+                            if isinstance(b, dict) and b.get("type") == "tool_result":
+                                tool_result_ids.add(b.get("tool_use_id"))
+                for b in tool_use_blocks:
+                    if b.get("id") not in tool_result_ids:
+                        name = b.get("name")
+                        if name and name != "AskUserQuestion":
+                            return name
+
+            return None
+
+        continue
+
+    return None
+
+
 def get_plan_pending_info(lines: list[str]) -> dict:
     """Return structured plan-approval-pending info.
 
@@ -965,6 +1096,39 @@ def open_session(session_id: str, config_dir: str, pid: int | None, alive: bool,
         return {"ok": False, "action": "error", "detail": str(e)}
 
 
+def _activity_ts(session: dict) -> float:
+    last_activity = session.get("last_activity")
+    if not last_activity:
+        return 0.0
+    try:
+        return datetime.fromisoformat(last_activity.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return 0.0
+
+
+def _hide_shadow_plans(sessions: list[dict]) -> None:
+    # When the user runs Claude multiple times in the same cwd, each JSONL
+    # becomes its own session card and may reference a plan file. Plans
+    # live in a shared ~/.claude/plans/ dir and represent "the current plan
+    # for this cwd", not per-session archives. Without this step, every
+    # sibling card shows its own plan and the user cannot tell which one
+    # is current. Policy: keep plan_file_path only on the session with the
+    # greatest last_activity within each non-empty cwd group; null it on
+    # older ones. Fix for: shadow-session plan confusion (2026-04-15).
+    groups: dict[str, list[dict]] = {}
+    for s in sessions:
+        if not (s.get("cwd") or "") or not s.get("plan_file_path"):
+            continue
+        groups.setdefault(s["cwd"], []).append(s)
+    for group in groups.values():
+        if len(group) < 2:
+            continue
+        group.sort(key=_activity_ts, reverse=True)
+        for stale in group[1:]:
+            stale["plan_file_path"] = None
+            stale["plan_file_exists"] = False
+
+
 def collect_sessions() -> dict:
     accounts = []
 
@@ -1045,7 +1209,27 @@ def collect_sessions() -> dict:
                     if alive:
                         activity = detect_activity_state(pid) if pid else "idle"
                         if activity == "subagent":
-                            status = "subagent"
+                            # Strict mode: parent can be blocked on a tool-approval prompt
+                            # while a child claude (Task subagent, or a lingering child) is
+                            # still alive. Before this gate, the subagent branch short-
+                            # circuited and hid the approval prompt — user would miss it.
+                            # Distinguish by the pending tool:
+                            #   - "Task": legitimate subagent wait -> "subagent".
+                            #   - any other tool: parent blocked on approval -> "approving".
+                            #   - "<unknown-pending>" + stale JSONL: stop_reason=="tool_use"
+                            #     but the block isn't in JSONL yet -> "approving".
+                            # Questioning is checked first so AskUserQuestion still wins
+                            # during an active subagent.
+                            # Fix for: strict-mode subagent-hides-approving (2026-04-15).
+                            pending_tool = get_pending_tool_name(lines)
+                            if session_state == "questioning":
+                                status = "questioning"
+                            elif pending_tool and pending_tool not in ("Task", "<unknown-pending>"):
+                                status = "approving"
+                            elif pending_tool == "<unknown-pending>" and (time.time() - file_mtime) > 3:
+                                status = "approving"
+                            else:
+                                status = "subagent"
                         elif activity == "hook":
                             status = "hook"
                         elif session_state == "questioning":
@@ -1058,7 +1242,16 @@ def collect_sessions() -> dict:
                             # executing.  If the process tree shows active child
                             # processes, the tool is running — not blocked.
                             status = "thinking" if activity == "thinking" else "approving"
-                        elif activity == "thinking" or session_state == "thinking":
+                        elif session_state != "waiting" and (activity == "thinking" or session_state == "thinking"):
+                            # Don't promote to "thinking" when session_state is "waiting":
+                            # activity=="thinking" only means "there's a meaningful descendant
+                            # process", which is a false positive for long-running background
+                            # servers the user started via a Bash tool (npm start, vite, serve,
+                            # etc.) and left running. The JSONL is authoritative — if the last
+                            # assistant entry is a plain text response with no pending tool_use,
+                            # Claude has finished. Fall through to the final branch so status
+                            # becomes "waiting".
+                            # Fix for: lingering-bg-server false "thinking" (2026-04-15).
                             if session_state == "thinking" and activity == "idle":
                                 # During LLM inference the node process appears idle
                                 # (waiting on API HTTP response, no child processes,
@@ -1105,6 +1298,16 @@ def collect_sessions() -> dict:
                             # prompt whose tool_use hasn't been written yet.
                             # Detect this by checking if the "waiting" came from
                             # a synthetic entry on an alive, idle process.
+                            #
+                            # We intentionally do NOT promote "waiting" to
+                            # "thinking" based on main-process CPU alone:
+                            # interactive claude --chrome sessions routinely
+                            # burn ~14% CPU at idle (terminal rendering + chrome
+                            # extension IPC), so CPU delta is not a reliable
+                            # mid-inference signal. JSONL is authoritative; a
+                            # few seconds of lag between user-submits-prompt
+                            # and JSONL-gets-the-user-entry is acceptable.
+                            # Fix for: false "thinking" on idle chrome sessions (2026-04-15).
                             if (activity == "idle" and _last_entry_is_synthetic(lines)
                                     and not _session_has_exit_command(lines)):
                                 # Alive process with idle activity and a synthetic last
@@ -1216,6 +1419,8 @@ def collect_sessions() -> dict:
             -(datetime.fromisoformat(s["last_activity"].replace("Z", "+00:00")).timestamp()
               if s["last_activity"] else 0),
         ))
+
+        _hide_shadow_plans(sessions)
 
         accounts.append({
             "email": email,

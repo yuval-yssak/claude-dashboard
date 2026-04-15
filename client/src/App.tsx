@@ -314,6 +314,7 @@ function App() {
 						onToggleTodo={handleToggleTodo}
 						onAddTodo={handleAddTodo}
 						onDeleteTodo={handleDeleteTodo}
+						onCopyPath={showToast}
 					/>
 				))}
 			<Toast message={toastMessage} />

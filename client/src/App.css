@@ -285,7 +285,9 @@ body {
 	padding: 2px 4px;
 	border-radius: 4px;
 	opacity: 0;
-	transition: opacity 0.15s, color 0.15s;
+	transition:
+		opacity 0.15s,
+		color 0.15s;
 	touch-action: none;
 }
 .session-card:hover .drag-handle {
@@ -312,7 +314,9 @@ body {
 	padding: 2px 4px;
 	border-radius: 4px;
 	opacity: 0;
-	transition: opacity 0.15s, color 0.15s;
+	transition:
+		opacity 0.15s,
+		color 0.15s;
 }
 .session-card:hover .pin-btn {
 	opacity: 0.5;
@@ -412,6 +416,40 @@ body {
 .mode-badge.mode-acceptEdits {
 	background: rgba(74, 222, 128, 0.15);
 	color: #4ade80;
+}
+/* Amber, dashed: mode cannot be directly observed from the JSONL because
+   Claude Code does not record silent shift+tab toggles. Hover for details. */
+.mode-badge.mode-unknown {
+	background: rgba(251, 191, 36, 0.18);
+	color: #fbbf24;
+	border: 1px dashed rgba(251, 191, 36, 0.55);
+	padding: 0 5px;
+	font-style: italic;
+	cursor: help;
+}
+/* Decoration on waiting/thinking when plan-pending is inferred-stale.
+   Amber left border signals uncertainty without replacing the base status color. */
+.status-badge.unknown-plan {
+	border-left: 3px solid #fbbf24;
+	padding-left: 6px;
+	cursor: help;
+}
+/* Uncertainty tooltip variant of the usage tooltip. Wider for multi-line
+   explanations; re-uses .usage-tooltip for base styling and positioning. */
+.uncertainty-tooltip {
+	width: 320px;
+	pointer-events: none;
+}
+.uncertainty-tooltip .uncertainty-explanation {
+	display: block;
+	color: var(--text, #ddd);
+	font-size: 11px;
+	line-height: 1.4;
+	padding-top: 6px;
+}
+.uncertainty-tooltip .uncertainty-action {
+	color: #fbbf24;
+	font-style: italic;
 }
 
 .session-name {
@@ -980,7 +1018,6 @@ body {
 .add-todo-btn:hover {
 	opacity: 0.85;
 }
-
 
 .open-btn {
 	padding: 3px 10px;

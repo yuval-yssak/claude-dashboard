@@ -23,6 +23,7 @@ import { UsageBars } from "./UsageBars";
 
 interface AccountSectionProps {
 	account: Account;
+	strictUnknown: boolean;
 	openPanels: Set<string>;
 	loadingSessions: Set<string>;
 	onTogglePanel: (sessionId: string) => void;
@@ -37,6 +38,7 @@ interface AccountSectionProps {
 
 interface SortableCardProps {
 	session: Session;
+	strictUnknown: boolean;
 	isPinned: boolean;
 	isPendingMove: boolean;
 	onTogglePin: () => void;
@@ -59,6 +61,7 @@ interface SortableCardProps {
 
 function SortableCard({
 	session,
+	strictUnknown,
 	isPinned,
 	isPendingMove,
 	onTogglePin,
@@ -99,6 +102,7 @@ function SortableCard({
 		>
 			<SessionCard
 				session={session}
+				strictUnknown={strictUnknown}
 				isPinned={isPinned}
 				isPendingMove={isPendingMove}
 				onTogglePin={onTogglePin}
@@ -112,6 +116,7 @@ function SortableCard({
 
 export function AccountSection({
 	account,
+	strictUnknown,
 	openPanels,
 	loadingSessions,
 	onTogglePanel,
@@ -192,6 +197,7 @@ export function AccountSection({
 							<SortableCard
 								key={s.session_id}
 								session={s}
+								strictUnknown={strictUnknown}
 								isPinned={pinnedIds.has(s.session_id)}
 								isPendingMove={pendingMoveIds.has(s.session_id)}
 								onTogglePin={() =>

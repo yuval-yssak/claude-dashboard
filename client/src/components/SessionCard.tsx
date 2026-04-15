@@ -2,11 +2,13 @@ import { forwardRef } from "react";
 import type { Session } from "../types";
 import { AnnotationsPanel } from "./AnnotationsPanel";
 import { ClaudeTodos } from "./ClaudeTodos";
+import { ModeBadge } from "./ModeBadge";
 import { PlanViewer } from "./PlanViewer";
 import { StatusBadge } from "./StatusBadge";
 
 interface SessionCardProps {
 	session: Session;
+	strictUnknown: boolean;
 	isOpen: boolean;
 	onTogglePanel: () => void;
 	onOpenSession: () => void;
@@ -28,6 +30,7 @@ export const SessionCard = forwardRef<HTMLDivElement, SessionCardProps>(
 	function SessionCard(
 		{
 			session,
+			strictUnknown,
 			isOpen,
 			onTogglePanel,
 			onOpenSession,
@@ -101,7 +104,12 @@ export const SessionCard = forwardRef<HTMLDivElement, SessionCardProps>(
 							title="Drag to reorder"
 							{...(dragHandleProps || {})}
 						>
-							<svg width="12" height="18" viewBox="0 0 12 18" fill="currentColor">
+							<svg
+								width="12"
+								height="18"
+								viewBox="0 0 12 18"
+								fill="currentColor"
+							>
 								<circle cx="3" cy="3" r="1.5" />
 								<circle cx="9" cy="3" r="1.5" />
 								<circle cx="3" cy="9" r="1.5" />
@@ -120,7 +128,16 @@ export const SessionCard = forwardRef<HTMLDivElement, SessionCardProps>(
 									onTogglePin();
 								}}
 							>
-								<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+								<svg
+									width="14"
+									height="14"
+									viewBox="0 0 24 24"
+									fill="none"
+									stroke="currentColor"
+									strokeWidth="2"
+									strokeLinecap="round"
+									strokeLinejoin="round"
+								>
 									<line x1="12" y1="17" x2="12" y2="22" />
 									<path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z" />
 								</svg>
@@ -137,21 +154,25 @@ export const SessionCard = forwardRef<HTMLDivElement, SessionCardProps>(
 						>
 							{loading ? "..." : openLabel}
 						</button>
-						<StatusBadge status={s.status} />
+						<StatusBadge
+							status={s.status}
+							planPendingInfo={s.plan_pending_info}
+							strict={strictUnknown}
+						/>
 					</div>
 				</div>
 				{s.topic && !s.session_name && <div className="topic">{s.topic}</div>}
 				{s.last_user_msg ? (
-					<div className={`last-msg last-user-msg${s.user_msg_stale ? " stale" : ""}`}>
+					<div
+						className={`last-msg last-user-msg${s.user_msg_stale ? " stale" : ""}`}
+					>
 						{s.last_user_msg}
 					</div>
 				) : s.alive ? (
 					<div className="last-msg active-hint">Active session</div>
 				) : null}
 				{s.current_activity && s.alive ? (
-					<div className="last-msg current-activity">
-						{s.current_activity}
-					</div>
+					<div className="last-msg current-activity">{s.current_activity}</div>
 				) : s.last_assistant_text ? (
 					<div
 						className="last-msg last-assistant-text"
@@ -164,11 +185,7 @@ export const SessionCard = forwardRef<HTMLDivElement, SessionCardProps>(
 					<span>{s.last_activity_ago}</span>
 					{shortCwd && <span title={s.cwd}>{shortCwd}</span>}
 					{s.git_branch && <span>branch: {s.git_branch}</span>}
-					{s.permission_mode && s.permission_mode !== "default" && (
-						<span className={`mode-badge mode-${s.permission_mode}`}>
-							{s.permission_mode === "acceptEdits" ? "accept-edits" : s.permission_mode} mode
-						</span>
-					)}
+					<ModeBadge info={s.permission_mode_info} strict={strictUnknown} />
 					<span>{s.file_size_kb} KB</span>
 					<span
 						className="jsonl-link"

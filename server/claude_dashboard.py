@@ -769,14 +769,35 @@ def detect_session_state(lines: list[str]) -> str:
     return "unknown"
 
 
-def _is_plan_approval_pending(lines: list[str]) -> bool:
-    """Check if the session is in plan mode waiting for plan approval.
+def get_plan_pending_info(lines: list[str]) -> dict:
+    """Return structured plan-approval-pending info.
 
-    Returns True only when the last permission-mode entry is "plan" AND
-    there's no real (non-synthetic) assistant activity after it — which
-    would indicate the plan was already approved and Claude continued
-    working.
+    Shape:
+        {
+            "pending": bool,          # strict backend answer: True only with direct evidence
+            "confidence": "observed" | "inferred-stale-plan-entry" | "not-pending",
+            "evidence": {
+                "last_permission_mode_entry": str | None,
+                "assistant_activity_after": bool,
+                "exit_plan_mode_seen": bool,
+                "enter_plan_mode_after_exit": bool,
+            }
+        }
+
+    `confidence == "inferred-stale-plan-entry"` marks the case where a
+    `permission-mode:"plan"` entry exists but assistant activity followed
+    it — classic "session resumed mid-plan, then continued" OR "user
+    silently shift+tab'd back into plan mode after edits".  The JSONL
+    cannot distinguish the two, so the backend reports pending=False but
+    surfaces the ambiguity for the UI to decorate.  See plan file
+    tender-frolicking-donut.md.
     """
+    evidence = {
+        "last_permission_mode_entry": None,
+        "assistant_activity_after": False,
+        "exit_plan_mode_seen": False,
+        "enter_plan_mode_after_exit": False,
+    }
     skip_types = ("file-history-snapshot", "attachment", "custom-title",
                   "agent-name")
     found_plan_mode = False
@@ -791,30 +812,31 @@ def _is_plan_approval_pending(lines: list[str]) -> bool:
         if msg_type in skip_types:
             continue
         if msg_type == "permission-mode":
-            if obj.get("permissionMode") == "plan":
+            entry_mode = obj.get("permissionMode")
+            evidence["last_permission_mode_entry"] = entry_mode
+            if entry_mode == "plan":
                 found_plan_mode = True
             # Any permission-mode entry (plan or otherwise) is definitive.
             break
         # Any assistant activity after the permission-mode entry means
-        # the plan was already approved/completed.  This includes synthetic
-        # messages (e.g. "No response requested" after session end) — they
-        # indicate the turn finished, so plan approval is not pending.
+        # the plan was already approved/completed — or the user silently
+        # toggled back into plan mode after edits (unknowable).
         if msg_type == "assistant":
-            # Synthetic messages (e.g. "No response requested." after resume)
-            # are not real assistant activity — skip them.
             model = (obj.get("message") or {}).get("model", "")
             if model == "<synthetic>":
+                # Synthetic messages aren't real activity; keep scanning.
                 continue
-            return False
-        # User messages, system entries, etc. — keep scanning past them
-        # to find the permission-mode entry.
+            evidence["assistant_activity_after"] = True
+            # Keep scanning back to find the permission-mode entry itself
+            # so we can populate last_permission_mode_entry.
+            continue
         continue
     if not found_plan_mode:
-        return False
-    # Plan mode entry found, but it may be a stale re-emission from
-    # session resume.  Check if ExitPlanMode was called — if so, the
-    # plan was already approved and is not pending.
-    # Scan backwards for the most recent plan-lifecycle tool call.
+        return {"pending": False, "confidence": "not-pending", "evidence": evidence}
+
+    # Plan mode entry found.  Now check ExitPlanMode / EnterPlanMode tool calls
+    # across the whole tail.  This handles the session-resume case where
+    # permission-mode:"plan" is re-emitted at the top of the file.
     for line in reversed(lines):
         if not line.strip():
             continue
@@ -830,12 +852,33 @@ def _is_plan_approval_pending(lines: list[str]) -> bool:
             continue
         for b in content:
             if isinstance(b, dict) and b.get("type") == "tool_use":
-                if b.get("name") == "ExitPlanMode":
-                    return False
-                if b.get("name") == "EnterPlanMode":
-                    # Re-entered plan mode after exiting — still pending.
-                    return True
-    return True
+                name = b.get("name")
+                if name == "ExitPlanMode":
+                    evidence["exit_plan_mode_seen"] = True
+                elif name == "EnterPlanMode" and evidence["exit_plan_mode_seen"]:
+                    # Re-entered plan mode after exiting — unambiguous pending.
+                    evidence["enter_plan_mode_after_exit"] = True
+        if evidence["enter_plan_mode_after_exit"]:
+            break
+
+    if evidence["enter_plan_mode_after_exit"]:
+        return {"pending": True, "confidence": "observed", "evidence": evidence}
+    if evidence["exit_plan_mode_seen"]:
+        # Plan was explicitly exited → not pending, high confidence.
+        return {"pending": False, "confidence": "not-pending", "evidence": evidence}
+    if evidence["assistant_activity_after"]:
+        # Assistant activity followed the plan-mode entry with no ExitPlanMode
+        # recorded.  Could be (a) plan approved via edits without explicit
+        # ExitPlanMode, or (b) user silently shift+tab'd back into plan.
+        # Report not-pending but flag the uncertainty.
+        return {"pending": False, "confidence": "inferred-stale-plan-entry", "evidence": evidence}
+    # Plan mode entry with no following activity → confidently pending.
+    return {"pending": True, "confidence": "observed", "evidence": evidence}
+
+
+def _is_plan_approval_pending(lines: list[str]) -> bool:
+    """Back-compat wrapper returning the plain bool."""
+    return get_plan_pending_info(lines)["pending"]
 
 
 def _last_entry_is_user(lines: list[str]) -> bool:
@@ -1047,73 +1090,131 @@ def get_git_branch(lines: list[str]) -> str | None:
     return None
 
 
-def get_permission_mode(lines: list[str]) -> str | None:
-    # When the permission-mode entry says "plan", verify the session is
-    # still in plan mode by checking for write/edit tool_use after it.
-    # Claude Code doesn't always write a permission-mode entry when
-    # exiting plan mode, so assistant messages using editing tools
-    # (Write, Edit, Bash, etc.) imply plan was approved → acceptEdits.
-    # ExitPlanMode is the definitive signal that plan mode ended;
-    # edit tools are a fallback for when no explicit exit was written.
+def get_permission_mode_info(lines: list[str]) -> dict:
+    """Return structured permission-mode info.
+
+    Shape:
+        {
+            "observed": str | None,    # direct read from JSONL, or None if not observable
+            "inferred": str | None,    # best-guess inference (today's behavior), or None
+            "confidence": "observed" | "inferred-exit-plan" | "inferred-edits-after-plan"
+                          | "inferred-plan-at-tail" | "none",
+            "evidence": {
+                "last_permission_mode_entry": str | None,
+                "lines_since_entry": int,
+                "exit_plan_mode_seen_after": bool,
+                "edit_tools_seen_after": bool,
+                "enter_plan_mode_seen_after": bool,
+            }
+        }
+
+    The backend never hides uncertainty: when the current mode must be
+    inferred from post-entry evidence (the classic "permission-mode:plan"
+    at line 1 + edit tools after" case), `observed` is None and the
+    client decides whether to trust the inference or display "unknown".
+    See plan file tender-frolicking-donut.md for rationale.
+    """
     PLAN_EXIT_TOOLS = {"Write", "Edit", "Bash", "NotebookEdit", "ExitPlanMode"}
+    evidence = {
+        "last_permission_mode_entry": None,
+        "lines_since_entry": 0,
+        "exit_plan_mode_seen_after": False,
+        "edit_tools_seen_after": False,
+        "enter_plan_mode_seen_after": False,
+    }
+
+    # Find the most recent permission-mode entry.
+    entry_idx = -1
+    mode = None
     for idx in range(len(lines) - 1, -1, -1):
         line = lines[idx]
         if "permissionMode" not in line:
             continue
         try:
             obj = json.loads(line)
-            if obj.get("type") != "permission-mode":
-                continue
-            mode = obj.get("permissionMode")
-            if not mode:
-                continue
-            if mode != "plan":
-                return mode
-            # Mode is "plan" — check if there are editing tool_use calls
-            # after this entry, which would mean the plan was approved.
-            for later_line in lines[idx + 1:]:
-                try:
-                    later_obj = json.loads(later_line)
-                except json.JSONDecodeError:
-                    continue
-                later_msg = later_obj.get("message", {})
-                if later_msg.get("role") != "assistant":
-                    continue
-                content = later_msg.get("content", [])
-                if not isinstance(content, list):
-                    continue
-                for b in content:
-                    if (isinstance(b, dict) and b.get("type") == "tool_use"
-                            and b.get("name") in PLAN_EXIT_TOOLS):
-                        return "acceptEdits"
-            # lines[idx+1:] scan found no exit tools.
-            # On session resume, permission-mode is re-emitted — ExitPlanMode
-            # may precede this entry.  Scan earlier lines for it.
-            # Only check ExitPlanMode (not Write/Edit/Bash) since those could
-            # be from a pre-plan segment.
-            for earlier_line in reversed(lines[:idx]):
-                try:
-                    earlier_obj = json.loads(earlier_line)
-                except json.JSONDecodeError:
-                    continue
-                earlier_msg = earlier_obj.get("message", {})
-                if earlier_msg.get("role") != "assistant":
-                    continue
-                econtent = earlier_msg.get("content", [])
-                if not isinstance(econtent, list):
-                    continue
-                for b in econtent:
-                    if isinstance(b, dict) and b.get("type") == "tool_use":
-                        if b.get("name") == "ExitPlanMode":
-                            return "acceptEdits"
-                        if b.get("name") == "EnterPlanMode":
-                            # Re-entered plan mode — this permission-mode
-                            # entry is for the new plan session, not stale.
-                            return "plan"
-            return "plan"
         except json.JSONDecodeError:
             continue
-    return None
+        if obj.get("type") != "permission-mode":
+            continue
+        candidate = obj.get("permissionMode")
+        if not candidate:
+            continue
+        entry_idx = idx
+        mode = candidate
+        evidence["last_permission_mode_entry"] = mode
+        break
+
+    if entry_idx < 0:
+        return {"observed": None, "inferred": None, "confidence": "none", "evidence": evidence}
+
+    evidence["lines_since_entry"] = len(lines) - 1 - entry_idx
+
+    if mode != "plan":
+        # Non-plan entries are treated as directly observed.  A silent
+        # shift+tab after this entry is unknowable but rare enough that
+        # we trust the most recent observation.  Same behavior as today.
+        return {"observed": mode, "inferred": mode, "confidence": "observed", "evidence": evidence}
+
+    # mode == "plan": scan forward for exit/edit signals.
+    for later_line in lines[entry_idx + 1:]:
+        try:
+            later_obj = json.loads(later_line)
+        except json.JSONDecodeError:
+            continue
+        later_msg = later_obj.get("message", {})
+        if later_msg.get("role") != "assistant":
+            continue
+        content = later_msg.get("content", [])
+        if not isinstance(content, list):
+            continue
+        for b in content:
+            if not isinstance(b, dict) or b.get("type") != "tool_use":
+                continue
+            name = b.get("name")
+            if name == "ExitPlanMode":
+                evidence["exit_plan_mode_seen_after"] = True
+            elif name == "EnterPlanMode":
+                evidence["enter_plan_mode_seen_after"] = True
+            elif name in PLAN_EXIT_TOOLS:
+                evidence["edit_tools_seen_after"] = True
+
+    # No evidence at all after the plan entry → plan is at the tail, confident.
+    if (not evidence["exit_plan_mode_seen_after"]
+            and not evidence["edit_tools_seen_after"]
+            and not evidence["enter_plan_mode_seen_after"]):
+        return {"observed": "plan", "inferred": "plan",
+                "confidence": "observed", "evidence": evidence}
+
+    # Re-entry into plan mode after exiting → observed as plan.
+    if evidence["enter_plan_mode_seen_after"] and evidence["exit_plan_mode_seen_after"]:
+        return {"observed": "plan", "inferred": "plan",
+                "confidence": "observed", "evidence": evidence}
+
+    # ExitPlanMode was called → today's inference would say acceptEdits.
+    if evidence["exit_plan_mode_seen_after"]:
+        return {"observed": None, "inferred": "acceptEdits",
+                "confidence": "inferred-exit-plan", "evidence": evidence}
+
+    # Edit tools after plan entry but no explicit exit → today's inference
+    # would say acceptEdits, but this is the classic silent-shift+tab bug.
+    if evidence["edit_tools_seen_after"]:
+        return {"observed": None, "inferred": "acceptEdits",
+                "confidence": "inferred-edits-after-plan", "evidence": evidence}
+
+    # Fallback (shouldn't reach here given the branches above).
+    return {"observed": "plan", "inferred": "plan",
+            "confidence": "inferred-plan-at-tail", "evidence": evidence}
+
+
+def get_permission_mode(lines: list[str]) -> str | None:
+    """Back-compat wrapper returning the best-guess string.
+
+    Prefer `get_permission_mode_info` for new code — it carries the
+    confidence signal needed to honestly represent silent shift+tab
+    scenarios.
+    """
+    info = get_permission_mode_info(lines)
+    return info["observed"] or info["inferred"]
 
 
 def get_session_title(lines: list[str]) -> str | None:
@@ -1406,7 +1507,9 @@ def collect_sessions() -> dict:
                     last_ts = get_last_timestamp(lines)
                     todos = extract_last_todo(lines)
                     git_branch = get_git_branch(lines)
-                    permission_mode = get_permission_mode(lines)
+                    permission_mode_info = get_permission_mode_info(lines)
+                    permission_mode = permission_mode_info["observed"] or permission_mode_info["inferred"]
+                    plan_pending_info = get_plan_pending_info(lines)
                     plan_file_path = extract_plan_file_path(lines)
                     plan_file_exists = bool(plan_file_path) and os.path.isfile(plan_file_path)
                     topic = get_session_topic(jsonl_file)
@@ -1511,7 +1614,12 @@ def collect_sessions() -> dict:
                         # Only apply when plan is actually pending: the
                         # permission-mode entry says "plan" AND there's no
                         # real assistant work after it.
-                        if status in ("waiting", "thinking") and _is_plan_approval_pending(lines):
+                        # Reuse the plan_pending_info we already computed for
+                        # the payload rather than re-scanning. Only the strict
+                        # pending=True case promotes to questioning; the
+                        # inferred-stale-plan-entry case is surfaced in the
+                        # payload for the client to decorate.
+                        if status in ("waiting", "thinking") and plan_pending_info["pending"]:
                             status = "questioning"
                     elif last_ts:
                         try:
@@ -1562,6 +1670,8 @@ def collect_sessions() -> dict:
                         "current_activity": current_activity,
                         "git_branch": git_branch,
                         "permission_mode": permission_mode,
+                        "permission_mode_info": permission_mode_info,
+                        "plan_pending_info": plan_pending_info,
                         "kind": kind,
                         "todos": todos,
                         "file_size_kb": round(file_size / 1024, 1),

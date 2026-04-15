@@ -48,11 +48,7 @@ export function AnnotationsPanel({
 		<div className="annotations-section">
 			{/* Notes preview - shown when closed AND has notes */}
 			{!isOpen && hasNotes && (
-				<div
-					className="notes-preview"
-					onClick={onToggle}
-					title="Click to edit"
-				>
+				<div className="notes-preview" onClick={onToggle} title="Click to edit">
 					{session.user_notes}
 				</div>
 			)}

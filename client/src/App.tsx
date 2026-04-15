@@ -21,6 +21,12 @@ function App() {
 	const [hideInactive, setHideInactive] = useState(
 		() => localStorage.getItem("dashboard-hide-inactive") === "true",
 	);
+	// Default strict: silent shift+tab toggles make mode unknowable, and we
+	// surface that uncertainty rather than showing a confidently-wrong badge.
+	// Users can opt out to lenient (trust today's inference) via the toggle.
+	const [strictUnknown, setStrictUnknown] = useState(
+		() => localStorage.getItem("dashboard-strict-unknown") !== "false",
+	);
 	// Force re-render counter for panel toggles
 	const [, setRenderTick] = useState(0);
 	const [connectionStatus, setConnectionStatus] =
@@ -197,6 +203,14 @@ function App() {
 		});
 	}, []);
 
+	const handleToggleStrictUnknown = useCallback(() => {
+		setStrictUnknown((prev) => {
+			const next = !prev;
+			localStorage.setItem("dashboard-strict-unknown", String(next));
+			return next;
+		});
+	}, []);
+
 	const filteredAccounts = useMemo(() => {
 		if (!data) return [];
 		const q = searchQuery.trim().toLowerCase();
@@ -263,6 +277,21 @@ function App() {
 							{hideInactive ? "\u25CF" : "\u25CB"}
 						</span>
 					</button>
+					<button
+						type="button"
+						className={`workspace-toggle ${strictUnknown ? "personal" : "work"}`}
+						onClick={handleToggleStrictUnknown}
+						title={
+							strictUnknown
+								? "Strict: show unknown when mode/plan must be inferred"
+								: "Lenient: trust inferred mode/plan signals"
+						}
+					>
+						<span className="workspace-toggle-label">
+							{strictUnknown ? "Strict" : "Lenient"}
+						</span>
+						<span className="workspace-toggle-icon">?</span>
+					</button>
 				</div>
 			)}
 			{!data && <div className="empty-state">Loading sessions...</div>}
@@ -274,6 +303,7 @@ function App() {
 					<AccountSection
 						key={a.config_dir}
 						account={a}
+						strictUnknown={strictUnknown}
 						openPanels={openPanelsRef.current}
 						loadingSessions={loadingSessions}
 						onTogglePanel={handleTogglePanel}

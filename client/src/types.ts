@@ -19,6 +19,42 @@ export interface UserTodo {
 	done: boolean;
 }
 
+export type PermissionModeConfidence =
+	| "observed"
+	| "inferred-exit-plan"
+	| "inferred-edits-after-plan"
+	| "inferred-plan-at-tail"
+	| "none";
+
+export interface PermissionModeInfo {
+	observed: string | null;
+	inferred: string | null;
+	confidence: PermissionModeConfidence;
+	evidence: {
+		last_permission_mode_entry: string | null;
+		lines_since_entry: number;
+		exit_plan_mode_seen_after: boolean;
+		edit_tools_seen_after: boolean;
+		enter_plan_mode_seen_after: boolean;
+	};
+}
+
+export type PlanPendingConfidence =
+	| "observed"
+	| "inferred-stale-plan-entry"
+	| "not-pending";
+
+export interface PlanPendingInfo {
+	pending: boolean;
+	confidence: PlanPendingConfidence;
+	evidence: {
+		last_permission_mode_entry: string | null;
+		assistant_activity_after: boolean;
+		exit_plan_mode_seen: boolean;
+		enter_plan_mode_after_exit: boolean;
+	};
+}
+
 export interface Session {
 	session_id: string;
 	session_name: string;
@@ -37,6 +73,8 @@ export interface Session {
 	user_msg_stale: boolean;
 	git_branch: string | null;
 	permission_mode: string | null;
+	permission_mode_info: PermissionModeInfo;
+	plan_pending_info: PlanPendingInfo;
 	kind: string;
 	todos: ClaudeTodo[] | null;
 	file_size_kb: number;

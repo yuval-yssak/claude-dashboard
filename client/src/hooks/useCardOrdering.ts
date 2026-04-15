@@ -1,5 +1,5 @@
-import { useState, useRef, useCallback, useEffect } from "react";
-import type { Session, LayoutPreferences } from "../types";
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { LayoutPreferences, Session } from "../types";
 
 const STORAGE_KEY = "dashboard-card-layout";
 const PENDING_DELAY_MS = 2500;
@@ -33,9 +33,7 @@ function applyPinnedToTop(order: string[], pinned: Set<string>): string[] {
 
 export function useCardOrdering(sessions: Session[], accountId: string) {
 	const [displayOrder, setDisplayOrder] = useState<string[]>([]);
-	const [pendingMoveIds, setPendingMoveIds] = useState<Set<string>>(
-		new Set(),
-	);
+	const [pendingMoveIds, setPendingMoveIds] = useState<Set<string>>(new Set());
 	const [pinnedIds, setPinnedIds] = useState<Set<string>>(() => {
 		const layout = loadLayout();
 		const acct = layout.positions[accountId] || {};
@@ -101,12 +99,15 @@ export function useCardOrdering(sessions: Session[], accountId: string) {
 			const serverIdx = i;
 			// Account for pinned cards shifting indices:
 			// server doesn't know about pinned-to-top, so adjust
-			const pinnedCount = [...pinnedIds].filter((pid) =>
-				displayOrder.indexOf(pid) < displayOrder.indexOf(id),
+			const pinnedCount = [...pinnedIds].filter(
+				(pid) => displayOrder.indexOf(pid) < displayOrder.indexOf(id),
 			).length;
 			const adjustedServerIdx = serverIdx + pinnedCount;
 
-			if (currentIdx !== adjustedServerIdx && !pendingTimersRef.current.has(id)) {
+			if (
+				currentIdx !== adjustedServerIdx &&
+				!pendingTimersRef.current.has(id)
+			) {
 				pendingUpdates.push(id);
 			}
 		}
@@ -243,31 +244,28 @@ export function useCardOrdering(sessions: Session[], accountId: string) {
 		[accountId],
 	);
 
-	const reorder = useCallback(
-		(activeId: string, overId: string) => {
-			setDisplayOrder((prev) => {
-				const oldIdx = prev.indexOf(activeId);
-				const newIdx = prev.indexOf(overId);
-				if (oldIdx === -1 || newIdx === -1) return prev;
-				const next = [...prev];
-				next.splice(oldIdx, 1);
-				next.splice(newIdx, 0, activeId);
-				userOrderRef.current = next;
-				return next;
-			});
-			setPendingMoveIds((prev) => {
-				const next = new Set(prev);
-				next.delete(activeId);
-				return next;
-			});
-			const timer = pendingTimersRef.current.get(activeId);
-			if (timer) {
-				clearTimeout(timer);
-				pendingTimersRef.current.delete(activeId);
-			}
-		},
-		[],
-	);
+	const reorder = useCallback((activeId: string, overId: string) => {
+		setDisplayOrder((prev) => {
+			const oldIdx = prev.indexOf(activeId);
+			const newIdx = prev.indexOf(overId);
+			if (oldIdx === -1 || newIdx === -1) return prev;
+			const next = [...prev];
+			next.splice(oldIdx, 1);
+			next.splice(newIdx, 0, activeId);
+			userOrderRef.current = next;
+			return next;
+		});
+		setPendingMoveIds((prev) => {
+			const next = new Set(prev);
+			next.delete(activeId);
+			return next;
+		});
+		const timer = pendingTimersRef.current.get(activeId);
+		if (timer) {
+			clearTimeout(timer);
+			pendingTimersRef.current.delete(activeId);
+		}
+	}, []);
 
 	const moveCard = useCallback(
 		(id: string, direction: "up" | "down" | "left" | "right") => {

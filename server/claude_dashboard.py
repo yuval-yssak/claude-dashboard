@@ -1251,16 +1251,27 @@ def collect_sessions() -> dict:
                             # executing.  If the process tree shows active child
                             # processes, the tool is running — not blocked.
                             status = "thinking" if activity == "thinking" else "approving"
-                        elif session_state != "waiting" and (activity == "thinking" or session_state == "thinking"):
-                            # Don't promote to "thinking" when session_state is "waiting":
-                            # activity=="thinking" only means "there's a meaningful descendant
-                            # process", which is a false positive for long-running background
-                            # servers the user started via a Bash tool (npm start, vite, serve,
-                            # etc.) and left running. The JSONL is authoritative — if the last
-                            # assistant entry is a plain text response with no pending tool_use,
-                            # Claude has finished. Fall through to the final branch so status
-                            # becomes "waiting".
-                            # Fix for: lingering-bg-server false "thinking" (2026-04-15).
+                        elif activity == "thinking" or session_state == "thinking":
+                            # Promote to "thinking" whenever the process tree has a
+                            # meaningful descendant, even if session_state=="waiting".
+                            # Claude Code does not always flush the new user entry to
+                            # JSONL before tool execution begins — when it doesn't, the
+                            # JSONL still shows the previous turn's end_turn (so
+                            # session_state=="waiting") while a Bash/Edit/etc. child is
+                            # already running for the new turn. Without this, the
+                            # dashboard would show "waiting" while Claude is actively
+                            # working.
+                            #
+                            # Trade-off (2026-04-16, deliberate): this re-introduces the
+                            # lingering-bg-server false "thinking" that the 2026-04-15
+                            # fix tried to suppress. If a user ran `npm run dev`/vite/
+                            # serve in a prior turn and left it running, that descendant
+                            # will keep the session showing "thinking" indefinitely. The
+                            # user accepted this trade-off because missing a real
+                            # in-flight turn (where Claude is actually working) is the
+                            # worse failure mode — the bg-server false positive is
+                            # cosmetic, the missed-thinking false negative causes the
+                            # user to ignore an active session.
                             if session_state == "thinking" and activity == "idle":
                                 # During LLM inference the node process appears idle
                                 # (waiting on API HTTP response, no child processes,

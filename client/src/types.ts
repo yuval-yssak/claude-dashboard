@@ -73,6 +73,8 @@ export interface Session {
 	current_activity: string | null;
 	user_msg_stale: boolean;
 	git_branch: string | null;
+	model: string | null;
+	thinking_recent: boolean;
 	permission_mode: string | null;
 	permission_mode_info: PermissionModeInfo;
 	plan_pending_info: PlanPendingInfo;

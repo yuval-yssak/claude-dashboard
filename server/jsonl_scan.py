@@ -96,6 +96,33 @@ def extract_last_assistant_text(lines: list[str]) -> str | None:
     return None
 
 
+def extract_last_assistant_model_and_thinking(lines: list[str]) -> dict:
+    """Find the most recent real assistant turn and report its model + whether it used thinking.
+
+    Skips "<synthetic>" model rows — Claude Code injects those for cancellation/error
+    sentinels, and reporting them would misrepresent which model is actually active.
+    """
+    for line in reversed(lines):
+        if '"role":"assistant"' not in line and '"role": "assistant"' not in line:
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if obj.get("type") != "assistant":
+            continue
+        msg = obj.get("message") or {}
+        model = msg.get("model")
+        if not model or model == "<synthetic>":
+            continue
+        content = msg.get("content", [])
+        thinking_recent = isinstance(content, list) and any(
+            isinstance(b, dict) and b.get("type") == "thinking" for b in content
+        )
+        return {"model": model, "thinking_recent": thinking_recent}
+    return {"model": None, "thinking_recent": False}
+
+
 def extract_current_activity(lines: list[str]) -> str | None:
     """Extract a human-readable description of the last tool Claude invoked."""
     for line in reversed(lines):

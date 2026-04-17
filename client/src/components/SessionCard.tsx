@@ -4,6 +4,7 @@ import { AnnotationsPanel } from "./AnnotationsPanel";
 import { ClaudeTodos } from "./ClaudeTodos";
 import { CopyPathBadge } from "./CopyPathBadge";
 import { ModeBadge } from "./ModeBadge";
+import { ModelBadge } from "./ModelBadge";
 import { PlanViewer } from "./PlanViewer";
 import { StatusBadge } from "./StatusBadge";
 
@@ -189,6 +190,7 @@ export const SessionCard = forwardRef<HTMLDivElement, SessionCardProps>(
 					{shortCwd && <span title={s.cwd}>{shortCwd}</span>}
 					{s.git_branch && <span>branch: {s.git_branch}</span>}
 					<ModeBadge info={s.permission_mode_info} strict={strictUnknown} />
+					<ModelBadge model={s.model} thinkingRecent={s.thinking_recent} />
 					<span>{s.file_size_kb} KB</span>
 					<CopyPathBadge
 						sessionId={s.session_id}

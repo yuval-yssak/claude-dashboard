@@ -58,6 +58,7 @@ from config import (  # noqa: E402
 )
 from jsonl_scan import (  # noqa: E402
     extract_current_activity,
+    extract_last_assistant_model_and_thinking,
     extract_last_assistant_text,
     extract_last_todo,
     extract_last_user_message,
@@ -1369,6 +1370,7 @@ def collect_sessions() -> dict:
                     topic = get_session_topic(jsonl_file)
                     last_user_msg = extract_last_user_message(lines)
                     last_assistant_text = extract_last_assistant_text(lines)
+                    model_info = extract_last_assistant_model_and_thinking(lines)
                     session_state = detect_session_state(lines)
 
                     pid_info = pid_map.get(session_id, {})
@@ -1571,6 +1573,8 @@ def collect_sessions() -> dict:
                         "last_assistant_text": last_assistant_text,
                         "current_activity": current_activity,
                         "git_branch": git_branch,
+                        "model": model_info["model"],
+                        "thinking_recent": model_info["thinking_recent"],
                         "permission_mode": permission_mode,
                         "permission_mode_info": permission_mode_info,
                         "plan_pending_info": plan_pending_info,

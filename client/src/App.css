@@ -439,6 +439,22 @@ body {
 	font-style: italic;
 	cursor: help;
 }
+/* Model name shown next to the permission-mode badge. Muted slate treatment:
+   present but not competing with status/mode for attention. */
+.model-badge {
+	font-size: 10px;
+	font-weight: 600;
+	text-transform: uppercase;
+	letter-spacing: 0.5px;
+	padding: 1px 6px;
+	border-radius: 3px;
+	white-space: nowrap;
+	background: rgba(148, 163, 184, 0.12);
+	color: #94a3b8;
+}
+.model-thinking-indicator {
+	opacity: 0.8;
+}
 /* Decoration on waiting/thinking when plan-pending is inferred-stale.
    Amber left border signals uncertainty without replacing the base status color. */
 .status-badge.unknown-plan {

@@ -39,10 +39,10 @@ function App() {
 
 	const debounce = useDebouncedSave();
 
-	const showToast = useCallback((msg: string) => {
+	const showToast = useCallback((msg: string, durationMs = 3000) => {
 		setToastMessage(msg);
 		if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
-		toastTimerRef.current = setTimeout(() => setToastMessage(null), 3000);
+		toastTimerRef.current = setTimeout(() => setToastMessage(null), durationMs);
 	}, []);
 
 	const findSession = useCallback(
@@ -94,7 +94,10 @@ function App() {
 			setLoadingSessions((prev) => new Set(prev).add(sessionId));
 			try {
 				const result = await openSession(sessionId);
-				showToast(result.detail || (result.ok ? "Done" : "Failed"));
+				// Warnings carry longer, multi-sentence guidance (e.g.
+				// cwd-ambiguous focus); give the user time to read them.
+				const duration = result.warning ? 8000 : 3000;
+				showToast(result.detail || (result.ok ? "Done" : "Failed"), duration);
 			} catch (e: unknown) {
 				showToast(`Error: ${e instanceof Error ? e.message : String(e)}`);
 			} finally {

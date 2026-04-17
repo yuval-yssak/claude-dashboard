@@ -987,7 +987,8 @@ def find_parent_app(pid: int) -> str | None:
     return None
 
 
-def focus_warp_tab(session_name: str, cwd: str = "", session_id: str = "") -> dict:
+def focus_warp_tab(session_name: str, cwd: str = "", session_id: str = "",
+                   cwd_live_siblings: int = 0) -> dict:
     """Focus the Warp tab whose title exactly matches one of our candidate terms.
 
     Warp has no AppleScript dictionary and its URI scheme cannot focus existing
@@ -995,10 +996,16 @@ def focus_warp_tab(session_name: str, cwd: str = "", session_id: str = "") -> di
     System Events. We match on stripped-glyph exact equality against an ordered
     candidate list (session_id > session_name > basename(cwd)) to avoid
     substring collisions between tabs that share a project/feature name.
+
+    When ``cwd_live_siblings > 0`` (another live session shares this cwd) and
+    we end up matching on the cwd-basename candidate, the result includes a
+    ``warning: "ambiguous_cwd"`` field so the UI can tell the user to install
+    the SessionStart hook that tags each tab with a unique ``claude:<id>``
+    title (see deploy/hooks/set-warp-tab-title.sh).
     """
-    # Build ordered match candidates, most-specific first. Users can tag tabs
-    # with "claude:<session_id>" via OSC title sequence (see README) to get an
-    # unambiguous match; otherwise we fall back to looser candidates.
+    # Build ordered match candidates, most-specific first. The SessionStart
+    # hook emits "claude:<session_id>" via OSC 2 — that's the only candidate
+    # that disambiguates siblings sharing a cwd.
     candidates: list[str] = []
     if session_id:
         candidates.append(f"claude:{session_id}")
@@ -1009,6 +1016,9 @@ def focus_warp_tab(session_name: str, cwd: str = "", session_id: str = "") -> di
         candidates.append(cwd_base)
     if not candidates:
         candidates.append("Claude Code")
+    # Index of the cwd-basename candidate (if present) — used below to detect
+    # when we fell all the way through to the ambiguous fallback.
+    cwd_candidate_index = candidates.index(cwd_base) if cwd_base in candidates else -1
 
     def ascii_escape(s: str) -> str:
         return s.replace("\\", "\\\\").replace('"', '\\"')
@@ -1047,12 +1057,17 @@ def focus_warp_tab(session_name: str, cwd: str = "", session_id: str = "") -> di
             return s
         end stripGlyph
 
+        -- Returns the 1-based index of the first matching candidate, or 0 if
+        -- none match. Callers convert to 0-based (idx - 1) for the return
+        -- payload so Python sees the same index it built the list with.
         on matchName(curName, cands)
             set target to my stripGlyph(curName)
+            set idx to 0
             repeat with c in cands
-                if target is equal to (c as text) then return true
+                set idx to idx + 1
+                if target is equal to (c as text) then return idx
             end repeat
-            return false
+            return 0
         end matchName
 
         tell application "Warp" to activate
@@ -1076,9 +1091,12 @@ def focus_warp_tab(session_name: str, cwd: str = "", session_id: str = "") -> di
                     try
                         set w to window i
                         set nm to name of w
-                        if nm is not missing value and my matchName(nm, cands) then
-                            perform action "AXRaise" of w
-                            return "found:" & my stripGlyph(nm)
+                        if nm is not missing value then
+                            set mIdx to my matchName(nm, cands)
+                            if mIdx > 0 then
+                                perform action "AXRaise" of w
+                                return "found:" & (mIdx - 1) & ":" & my stripGlyph(nm)
+                            end if
                         end if
                     end try
                 end repeat
@@ -1112,9 +1130,10 @@ def focus_warp_tab(session_name: str, cwd: str = "", session_id: str = "") -> di
                                 set curName to name of window 1
                             end try
                             if curName is "" then exit repeat
-                            if my matchName(curName, cands) then
+                            set mIdx to my matchName(curName, cands)
+                            if mIdx > 0 then
                                 set matched to true
-                                return "found:" & my stripGlyph(curName)
+                                return "found:" & (mIdx - 1) & ":" & my stripGlyph(curName)
                             end if
                             set curStripped to my stripGlyph(curName)
                             -- Single-tab window: keystroke has no effect.
@@ -1167,8 +1186,29 @@ def focus_warp_tab(session_name: str, cwd: str = "", session_id: str = "") -> di
         )
         output = result.stdout.strip()
         if output.startswith("found:"):
-            tab_name = output[6:]
-            return {"ok": True, "action": "focused", "detail": f"Focused tab: {tab_name}"}
+            # Payload shape: "found:<idx>:<tab_name>" where idx is the 0-based
+            # position of the matched candidate in our list. Tab names can
+            # contain colons, so split only on the first two.
+            rest = output[len("found:"):]
+            idx_str, _, tab_name = rest.partition(":")
+            try:
+                matched_idx = int(idx_str)
+            except ValueError:
+                matched_idx = -1
+            resp = {"ok": True, "action": "focused", "detail": f"Focused tab: {tab_name}"}
+            # Warn when we fell through to the cwd-basename candidate and
+            # another live session shares this cwd — the match is not
+            # guaranteed to be the right tab. UI surfaces this as a toast
+            # pointing at the SessionStart hook install docs.
+            if (matched_idx == cwd_candidate_index and cwd_candidate_index >= 0
+                    and cwd_live_siblings > 0):
+                resp["warning"] = "ambiguous_cwd"
+                resp["detail"] = (
+                    f"Focused a tab in '{cwd_base}', but {cwd_live_siblings + 1} live "
+                    "sessions share this cwd. Install the SessionStart hook "
+                    "(see README → Warp Tab Focus Notes) to disambiguate."
+                )
+            return resp
         if output == "no_windows":
             return {"ok": False, "action": "not_found", "detail": "No Warp windows open"}
         shown = candidates[0] if candidates else ""
@@ -1179,12 +1219,14 @@ def focus_warp_tab(session_name: str, cwd: str = "", session_id: str = "") -> di
 
 
 def open_session(session_id: str, config_dir: str, pid: int | None, alive: bool,
-                 session_name: str = "", cwd: str = "") -> dict:
+                 session_name: str = "", cwd: str = "",
+                 cwd_live_siblings: int = 0) -> dict:
     """Open / focus a session.  Returns {ok, action, detail}."""
     if alive and pid:
         app = find_parent_app(pid)
         if app == "Warp":
-            return focus_warp_tab(session_name, cwd=cwd, session_id=session_id)
+            return focus_warp_tab(session_name, cwd=cwd, session_id=session_id,
+                                  cwd_live_siblings=cwd_live_siblings)
         elif app:
             script = f'tell application "{app}" to activate'
             try:
@@ -1544,6 +1586,19 @@ def collect_sessions() -> dict:
 
         sessions = [s for s in sessions if s["status"] not in ("inactive", "unknown")]
 
+        # Count live-session siblings per cwd. Two sessions in the same cwd
+        # land in indistinguishable Warp tabs (default title = cwd basename),
+        # so focus can't tell them apart without the SessionStart hook.
+        live_cwd_counts: dict[str, int] = {}
+        for s in sessions:
+            if s.get("alive") and s.get("cwd"):
+                live_cwd_counts[s["cwd"]] = live_cwd_counts.get(s["cwd"], 0) + 1
+        for s in sessions:
+            if s.get("alive") and s.get("cwd"):
+                s["cwd_live_siblings"] = live_cwd_counts[s["cwd"]] - 1
+            else:
+                s["cwd_live_siblings"] = 0
+
         # Tier 0: all active statuses — equal priority so status changes
         # within active sessions don't cause cards to swap positions.
         # Tier 1/2: dead sessions by recency.
@@ -1695,6 +1750,7 @@ class DashboardHandler(http.server.BaseHTTPRequestHandler):
                 alive=target.get("alive", False),
                 session_name=target.get("session_name", ""),
                 cwd=target.get("cwd", ""),
+                cwd_live_siblings=target.get("cwd_live_siblings", 0),
             )
             self._json_response(200, result)
         else:

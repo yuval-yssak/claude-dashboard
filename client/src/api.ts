@@ -14,7 +14,7 @@ export async function saveAnnotation(
 
 export async function openSession(
 	sessionId: string,
-): Promise<{ ok: boolean; detail?: string }> {
+): Promise<{ ok: boolean; detail?: string; warning?: string }> {
 	const resp = await fetch(`/api/open/${sessionId}`, { method: "POST" });
 	return resp.json();
 }

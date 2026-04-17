@@ -132,9 +132,29 @@ Environment variables (all optional):
 
 ## Warp Tab Focus Notes
 
-Clicking "focus" on a live Warp session asks macOS to switch to the tab where `claude` is running. Warp has no AppleScript dictionary and no URI-scheme action for focusing an existing tab ([warpdotdev/warp#8611](https://github.com/warpdotdev/warp/issues/8611)), so the dashboard drives `Cmd+Shift+[` via System Events and matches on the stripped tab title (leading activity glyph ignored). Match candidates, in order: session name, cwd basename. Matching is exact, not substring — if no candidate matches any tab, the dashboard leaves the window on the tab it started on rather than guess.
+Clicking "focus" on a live Warp session asks macOS to switch to the tab where `claude` is running. Warp has no AppleScript dictionary and no URI-scheme action for focusing an existing tab ([warpdotdev/warp#8611](https://github.com/warpdotdev/warp/issues/8611)), so the dashboard drives `Cmd+Shift+[` via System Events and matches on the stripped tab title (leading activity glyph ignored). Match candidates, in order: `claude:<session_id>`, Claude session name, cwd basename. Matching is exact, not substring — if no candidate matches any tab, the dashboard leaves the window on the tab it started on rather than guess.
 
-If you often have many similarly-named tabs in one window, ensure each session has a distinctive session name (shown in Claude Code as the first assistant message's summary title).
+### Disambiguating sessions that share a cwd (recommended)
+
+Warp's default tab title is the cwd basename, so two Claude sessions in the same directory (e.g. two `bot-launcher` sessions) produce two tabs with identical titles — the dashboard can't tell them apart and may focus the wrong one. When it detects this case, it shows a warning toast pointing at this section.
+
+To fix it permanently, install a `SessionStart` hook that tags each tab with `claude:<session_id>` on startup. Candidate #1 then matches unambiguously:
+
+1. Copy the hook into your `~/.claude/hooks/` directory:
+   ```sh
+   mkdir -p ~/.claude/hooks
+   cp deploy/hooks/set-warp-tab-title.sh ~/.claude/hooks/
+   chmod +x ~/.claude/hooks/set-warp-tab-title.sh
+   ```
+2. Register it in `~/.claude/settings.json` under `hooks`:
+   ```json
+   "SessionStart": [
+     { "matcher": "", "hooks": [{ "type": "command", "command": "~/.claude/hooks/set-warp-tab-title.sh" }] }
+   ]
+   ```
+3. Start new Claude sessions (or resume existing ones) so the hook fires — each Warp tab's title becomes `claude:<session_id>`.
+
+The hook writes the OSC 2 title escape directly to `/dev/tty`, so it works even though Claude Code captures hook stdout.
 
 ## License
 

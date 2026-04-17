@@ -130,6 +130,12 @@ Environment variables (all optional):
 | `CLAUDE_DASHBOARD_PORT` | `8484` | HTTP server port |
 | `CLAUDE_CONFIGS` | `~/.claude,~/.claude-personal` | Comma-separated config directories to watch |
 
+## Warp Tab Focus Notes
+
+Clicking "focus" on a live Warp session asks macOS to switch to the tab where `claude` is running. Warp has no AppleScript dictionary and no URI-scheme action for focusing an existing tab ([warpdotdev/warp#8611](https://github.com/warpdotdev/warp/issues/8611)), so the dashboard drives `Cmd+Shift+[` via System Events and matches on the stripped tab title (leading activity glyph ignored). Match candidates, in order: session name, cwd basename. Matching is exact, not substring — if no candidate matches any tab, the dashboard leaves the window on the tab it started on rather than guess.
+
+If you often have many similarly-named tabs in one window, ensure each session has a distinctive session name (shown in Claude Code as the first assistant message's summary title).
+
 ## License
 
 MIT

@@ -446,6 +446,16 @@ body {
 	padding-left: 6px;
 	cursor: help;
 }
+/* Strict-mode "unknown" — the status cannot be determined with
+   certainty (e.g., plan-pending inference ambiguity). Matches the
+   amber/dashed visual treatment of mode-badge.mode-unknown. */
+.status-badge.unknown {
+	background: rgba(251, 191, 36, 0.18);
+	color: #fbbf24;
+	border: 1px dashed rgba(251, 191, 36, 0.55);
+	font-style: italic;
+	cursor: help;
+}
 /* Uncertainty tooltip variant of the usage tooltip. Wider for multi-line
    explanations; re-uses .usage-tooltip for base styling and positioning. */
 .uncertainty-tooltip {

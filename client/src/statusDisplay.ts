@@ -39,11 +39,20 @@ export const resolveStatusDisplay = (
 	planPendingInfo: PlanPendingInfo,
 	strict: boolean,
 ): StatusDisplay => {
-	const decoratePlanUnknown =
-		strict &&
+	const planInference =
 		planPendingInfo.confidence === "inferred-stale-plan-entry" &&
 		(status === "waiting" || status === "thinking");
-	if (decoratePlanUnknown) {
+	if (strict && planInference) {
+		// Strict mode surfaces uncertainty as "unknown" rather than
+		// guessing. Lenient mode trusts the base status and decorates
+		// it with a "?" suffix (fallthrough below).
+		return {
+			className: "unknown",
+			label: "unknown",
+			uncertainty: buildUnknownPlanContent(planPendingInfo),
+		};
+	}
+	if (planInference) {
 		return {
 			className: `${status} unknown-plan`,
 			label: `${status} ?`,

@@ -1471,18 +1471,16 @@ def collect_sessions() -> dict:
                                 status = "approving"
                             else:
                                 status = "waiting"
-                        # Plan mode: the interview UI asks the user
-                        # multi-choice questions — semantically "questioning".
-                        # Only apply when plan is actually pending: the
-                        # permission-mode entry says "plan" AND there's no
-                        # real assistant work after it.
-                        # Reuse the plan_pending_info we already computed for
-                        # the payload rather than re-scanning. Only the strict
-                        # pending=True case promotes to questioning; the
-                        # inferred-stale-plan-entry case is surfaced in the
-                        # payload for the client to decorate.
-                        if status in ("waiting", "thinking") and plan_pending_info["pending"]:
-                            status = "questioning"
+                        # Plan-pending semantics are resolved client-side now.
+                        # The client reads plan_pending_info and, in strict
+                        # mode, surfaces ambiguous cases as "unknown"; in
+                        # lenient mode it decorates the base status. Promoting
+                        # to "questioning" here caused false-questioning while
+                        # Claude was mid-turn after a resumed permission-mode
+                        # entry — the JSONL shape cannot distinguish "plan
+                        # interview idle" from "alive, assistant entries not
+                        # yet flushed". "questioning" stays reserved for
+                        # AskUserQuestion, detected earlier in the chain.
                     elif last_ts:
                         try:
                             dt = datetime.fromisoformat(last_ts.replace("Z", "+00:00"))

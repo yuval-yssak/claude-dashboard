@@ -6,7 +6,8 @@ export type SessionStatus =
 	| "approving"
 	| "waiting"
 	| "recent"
-	| "idle";
+	| "idle"
+	| "unknown";
 
 export interface ClaudeTodo {
 	content: string;

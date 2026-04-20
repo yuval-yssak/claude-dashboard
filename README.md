@@ -132,7 +132,7 @@ Environment variables (all optional):
 
 ## Warp Tab Focus Notes
 
-Clicking "focus" on a live Warp session asks macOS to switch to the tab where `claude` is running. Warp has no AppleScript dictionary and no URI-scheme action for focusing an existing tab ([warpdotdev/warp#8611](https://github.com/warpdotdev/warp/issues/8611)), so the dashboard drives `Cmd+Shift+[` via System Events and matches on the stripped tab title (leading activity glyph ignored). Match candidates, in order: `claude:<session_id>`, Claude session name, cwd basename. Matching is exact, not substring — if no candidate matches any tab, the dashboard leaves the window on the tab it started on rather than guess.
+Clicking "focus" on a live Warp session asks macOS to switch to the tab where `claude` is running. Warp has no AppleScript dictionary and no URI-scheme action for focusing an existing tab ([warpdotdev/warp#8611](https://github.com/warpdotdev/warp/issues/8611)), so the dashboard raises each Warp window in turn and cycles its tabs with `Cmd+Shift+]` via System Events, matching the stripped tab title (leading activity glyph ignored) against an ordered candidate list: `claude:<session_id>`, Claude session name, `<parent>/<basename>` of the cwd, cwd basename. Matching is exact (or a truncation-suffix match when Warp shows a long title as `..<suffix>`) — not substring. The first pass only accepts the two **strong** candidates (`claude:<id>`, session name); cwd-derived candidates are tried only if no strong match exists anywhere, since multiple tabs can share a cwd title.
 
 ### Disambiguating sessions that share a cwd (recommended)
 

@@ -990,57 +990,63 @@ def find_parent_app(pid: int) -> str | None:
 
 def focus_warp_tab(session_name: str, cwd: str = "", session_id: str = "",
                    cwd_live_siblings: int = 0) -> dict:
-    """Focus the Warp tab whose title exactly matches one of our candidate terms.
+    """Focus the Warp tab whose title matches one of our candidate terms.
 
-    Warp has no AppleScript dictionary and its URI scheme cannot focus existing
-    tabs (see warpdotdev/warp#8611), so we're stuck driving Cmd+Shift+[ via
-    System Events. We match on stripped-glyph exact equality against an ordered
-    candidate list (session_id > session_name > basename(cwd)) to avoid
-    substring collisions between tabs that share a project/feature name.
+    Warp has no AppleScript dictionary, its URI scheme can't focus existing
+    tabs (warpdotdev/warp#8611), and its accessibility tree doesn't expose
+    tabs. The only reliable way to enumerate every tab across every window
+    is to raise each window and cycle its tabs via Cmd+Shift+], reading
+    `name of window 1` after each keystroke. This is slow but exhaustive.
 
-    When ``cwd_live_siblings > 0`` (another live session shares this cwd) and
-    we end up matching on the cwd-basename candidate, the result includes a
-    ``warning: "ambiguous_cwd"`` field so the UI can tell the user to install
-    the SessionStart hook that tags each tab with a unique ``claude:<id>``
-    title (see deploy/hooks/set-warp-tab-title.sh).
+    We match on stripped-glyph comparisons against an ordered candidate
+    list. STRONG candidates (session_id, session_name) uniquely identify
+    the target session — we cycle exhaustively to find them and never
+    short-circuit on a weak match. WEAK candidates (cwd-derived) are only
+    accepted on a second pass after all strong candidates fail.
+
+    Match is exact-or-truncation-suffix: Warp truncates long titles with a
+    leading ".." prefix (e.g. "..ripts/claude-dashboard" for the full
+    "scripts/claude-dashboard").
     """
-    # Build ordered match candidates, most-specific first. The SessionStart
-    # hook emits "claude:<session_id>" via OSC 2 — that's the only candidate
-    # that disambiguates siblings sharing a cwd.
+    # Build ordered match candidates, most-specific first.
     candidates: list[str] = []
     if session_id:
         candidates.append(f"claude:{session_id}")
     if session_name:
         candidates.append(session_name)
-    cwd_base = os.path.basename(cwd.rstrip("/")) if cwd else ""
-    if cwd_base and cwd_base not in candidates:
-        candidates.append(cwd_base)
+    cwd_stripped = cwd.rstrip("/") if cwd else ""
+    cwd_base = os.path.basename(cwd_stripped) if cwd_stripped else ""
+    cwd_parent_base = os.path.basename(os.path.dirname(cwd_stripped)) if cwd_stripped else ""
+    cwd_parent_slash_base = f"{cwd_parent_base}/{cwd_base}" if cwd_parent_base and cwd_base else ""
+    cwd_derived = [c for c in (cwd_parent_slash_base, cwd_base) if c]
+    cwd_candidate_indices: set[int] = set()
+    for c in cwd_derived:
+        if c and c not in candidates:
+            candidates.append(c)
+            cwd_candidate_indices.add(len(candidates) - 1)
     if not candidates:
         candidates.append("Claude Code")
-    # Index of the cwd-basename candidate (if present) — used below to detect
-    # when we fell all the way through to the ambiguous fallback.
-    cwd_candidate_index = candidates.index(cwd_base) if cwd_base in candidates else -1
 
     def ascii_escape(s: str) -> str:
         return s.replace("\\", "\\\\").replace('"', '\\"')
 
     escaped_candidates = [ascii_escape(c) for c in candidates]
-    # AppleScript list literal: {"a", "b", "c"}
     as_list = "{" + ", ".join(f'"{c}"' for c in escaped_candidates) + "}"
+    weak_indices_as = "{" + ", ".join(str(i + 1) for i in sorted(cwd_candidate_indices)) + "}"
+    if not cwd_candidate_indices:
+        weak_indices_as = "{}"
 
-    # Notes on AppleScript structure below:
-    #   * Handlers at script top level are called with `my <name>(...)` from
-    #     inside `tell application/process` blocks, otherwise the tell target
-    #     tries to resolve them.
-    #   * `key code` only works inside `tell application "System Events"`, so
-    #     the cycle loop must live inside that block — we can't put it in a
-    #     handler without re-opening the tell block each iteration.
-    #   * `stripped` is a reserved AppleScript keyword; avoid it as a var name.
+    # AppleScript strategy:
+    #   Phase 1 (strong): for every Warp window, raise it, then cycle tabs
+    #     via Cmd+Shift+] reading `name of window 1` between keystrokes.
+    #     Use a visit count (tab count or 20, whichever is smaller) bounded
+    #     by detecting when we loop back to the starting title. Check each
+    #     visited tab's stripped name against every STRONG candidate. Stop
+    #     on first match.
+    #   Phase 2 (weak): repeat the cycle, matching WEAK (cwd) candidates.
+    #   Phase 3 (fail): restore the originally focused window/tab by
+    #     raising it (we can't restore the exact tab — keystroke cost).
     apple_script = f'''
-        -- Warp prepends a non-ASCII activity glyph + space to live tab titles
-        -- (e.g. "✳ foo", "⠂ foo"). The glyph is volatile while a session runs
-        -- so strip it before comparing; compare with exact equality to avoid
-        -- substring collisions between similarly-named tabs.
         on stripGlyph(s)
             if s is missing value then return ""
             try
@@ -1048,133 +1054,116 @@ def focus_warp_tab(session_name: str, cwd: str = "", session_id: str = "",
             on error
                 return ""
             end try
-            if n < 3 then return s
+            if n < 3 then return s as text
             if (character 2 of s) is " " then
                 set firstChar to character 1 of s
                 if (id of firstChar) > 127 then
                     return text 3 thru -1 of s
                 end if
             end if
-            return s
+            return s as text
         end stripGlyph
 
-        -- Returns the 1-based index of the first matching candidate, or 0 if
-        -- none match. Callers convert to 0-based (idx - 1) for the return
-        -- payload so Python sees the same index it built the list with.
-        on matchName(curName, cands)
-            set target to my stripGlyph(curName)
-            set idx to 0
-            repeat with c in cands
-                set idx to idx + 1
-                if target is equal to (c as text) then return idx
+        on endsWith(haystack, suffix)
+            if suffix is "" then return false
+            set sLen to count of suffix
+            set hLen to count of haystack
+            if sLen > hLen then return false
+            return (text (hLen - sLen + 1) thru hLen of haystack) is equal to suffix
+        end endsWith
+
+        on matchOne(targetStripped, cand)
+            set candText to cand as text
+            if targetStripped is equal to candText then return true
+            set tLen to count of targetStripped
+            if tLen ≥ 6 and (text 1 thru 2 of targetStripped) is ".." then
+                set truncatedSuffix to text 3 thru -1 of targetStripped
+                if my endsWith(candText, truncatedSuffix) then return true
+            end if
+            return false
+        end matchOne
+
+        -- Try every candidate against one tab title. Returns matched
+        -- 1-based candidate index, or 0 if no match. `allowWeak` controls
+        -- whether weak (cwd) candidates are eligible — Phase 1 passes
+        -- false, Phase 2 passes true.
+        on matchAllCands(targetStripped, cands, weakIndices, allowWeak)
+            set candCount to count of cands
+            repeat with ci from 1 to candCount
+                set isWeak to false
+                repeat with wk in weakIndices
+                    if (wk as integer) is equal to ci then
+                        set isWeak to true
+                        exit repeat
+                    end if
+                end repeat
+                if isWeak and not allowWeak then
+                    -- skip weak in strong pass
+                else
+                    if my matchOne(targetStripped, item ci of cands) then
+                        return ci
+                    end if
+                end if
             end repeat
             return 0
-        end matchName
+        end matchAllCands
+
+        set cands to {as_list}
+        set weakIndices to {weak_indices_as}
 
         tell application "Warp" to activate
-        delay 0.3
-        set cands to {as_list}
+        delay 0.08
         tell application "System Events"
             tell process "Warp"
-                set winCount to count of windows
-                if winCount = 0 then return "no_windows"
+                set winList to every window
+                set winCount to count of winList
+                if winCount is 0 then return "no_windows"
 
-                -- Remember the original front window's identity so we can
-                -- restore it on not_found. Window positions reshuffle as we
-                -- AXRaise, so use title (stripped) as a stable handle.
-                set originalFrontStripped to ""
-                try
-                    set originalFrontStripped to my stripGlyph(name of window 1)
-                end try
-
-                -- Phase 1: check every window's *current* tab (no cycling).
-                repeat with i from 1 to winCount
-                    try
-                        set w to window i
-                        set nm to name of w
-                        if nm is not missing value then
-                            set mIdx to my matchName(nm, cands)
-                            if mIdx > 0 then
-                                perform action "AXRaise" of w
-                                return "found:" & (mIdx - 1) & ":" & my stripGlyph(nm)
-                            end if
-                        end if
-                    end try
-                end repeat
-
-                -- Phase 2 & 3: raise each window in turn and cycle its tabs
-                -- with Cmd+Shift+[ (previous tab). We re-read `window 1` each
-                -- iteration because the front window changes when we AXRaise.
-                set winIndex to 1
-                repeat while winIndex ≤ winCount
-                    if winIndex > 1 then
+                -- Two phases: phase 1 checks STRONG candidates (session_id,
+                -- session_name) only; phase 2 accepts WEAK (cwd) candidates.
+                -- Never short-circuit on a weak match while a strong one
+                -- might still be hiding in an unvisited tab.
+                repeat with phase from 1 to 2
+                    set allowWeak to (phase is 2)
+                    repeat with wi from 1 to winCount
+                        set w to item wi of winList
                         try
-                            perform action "AXRaise" of window winIndex
-                            delay 0.2
+                            perform action "AXRaise" of w
                         end try
-                    end if
-                    set startName to ""
-                    try
-                        set startName to name of window 1
-                    end try
-                    if startName is not "" then
-                        set startStripped to my stripGlyph(startName)
-                        set prevStripped to startStripped
-                        set stepsTaken to 0
-                        set matched to false
-                        repeat 20 times
-                            key code 30 using {{command down, shift down}}
-                            delay 0.15
-                            set stepsTaken to stepsTaken + 1
-                            set curName to ""
-                            try
-                                set curName to name of window 1
-                            end try
-                            if curName is "" then exit repeat
-                            set mIdx to my matchName(curName, cands)
-                            if mIdx > 0 then
-                                set matched to true
-                                return "found:" & (mIdx - 1) & ":" & my stripGlyph(curName)
-                            end if
-                            set curStripped to my stripGlyph(curName)
-                            -- Single-tab window: keystroke has no effect.
-                            if curStripped is equal to prevStripped then exit repeat
-                            -- Wrapped around without a match.
-                            if curStripped is equal to startStripped and stepsTaken > 1 then exit repeat
-                            set prevStripped to curStripped
-                        end repeat
-                        -- Not matched this window — cycle back to original tab.
-                        if not matched then
-                            set restoreSteps to 0
-                            repeat 20 times
-                                set nowName to ""
-                                try
-                                    set nowName to name of window 1
-                                end try
-                                if nowName is "" then exit repeat
-                                if my stripGlyph(nowName) is equal to startStripped then exit repeat
-                                key code 30 using {{command down, shift down}}
-                                delay 0.15
-                                set restoreSteps to restoreSteps + 1
-                                if restoreSteps ≥ 20 then exit repeat
-                            end repeat
-                        end if
-                    end if
-                    set winIndex to winIndex + 1
-                end repeat
+                        delay 0.08
 
-                -- Sweep finished without a match; re-raise the originally-front
-                -- window so the user doesn't land on whatever we last visited.
-                if originalFrontStripped is not "" then
-                    repeat with i from 1 to winCount
+                        set anchorRaw to ""
                         try
-                            if my stripGlyph(name of window i) is equal to originalFrontStripped then
-                                perform action "AXRaise" of window i
+                            set anchorRaw to name of window 1
+                        end try
+                        set anchorStripped to my stripGlyph(anchorRaw)
+
+                        set hit to my matchAllCands(anchorStripped, cands, weakIndices, allowWeak)
+                        if hit > 0 then
+                            return "found:" & (hit - 1) & ":" & anchorStripped
+                        end if
+
+                        -- Cycle forward up to 20 tabs, stopping when we loop
+                        -- back to the anchor title (or hit the cap). 20 is a
+                        -- safety cap — Warp tab strips typically hold ≤12.
+                        repeat with step from 1 to 20
+                            key code 30 using {{command down, shift down}}
+                            delay 0.05
+                            set curRaw to ""
+                            try
+                                set curRaw to name of window 1
+                            end try
+                            set curStripped to my stripGlyph(curRaw)
+                            if curStripped is equal to anchorStripped then
                                 exit repeat
                             end if
-                        end try
+                            set hit to my matchAllCands(curStripped, cands, weakIndices, allowWeak)
+                            if hit > 0 then
+                                return "found:" & (hit - 1) & ":" & curStripped
+                            end if
+                        end repeat
                     end repeat
-                end if
+                end repeat
 
                 return "not_found"
             end tell

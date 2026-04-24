@@ -22,6 +22,18 @@ def friendly_project_name(dir_name: str) -> str:
     return path
 
 
+def abbreviate_home(path: str) -> str:
+    """Replace the user's home prefix with ~. Input must be an absolute path."""
+    if not path:
+        return path
+    home = os.path.expanduser("~")
+    if path == home:
+        return "~"
+    if path.startswith(home + "/"):
+        return "~" + path[len(home):]
+    return path
+
+
 def time_ago(iso_ts: str) -> str:
     try:
         dt = datetime.fromisoformat(iso_ts.replace("Z", "+00:00"))

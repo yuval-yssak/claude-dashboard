@@ -255,6 +255,24 @@ def get_git_branch(lines: list[str]) -> str | None:
     return None
 
 
+def extract_cwd(lines: list[str]) -> str | None:
+    # Claude Code writes the real cwd on every user/assistant/system entry.
+    # We prefer this over decoding ~/.claude/projects/<dir-name> because the
+    # folder name encodes "/" as "-" with no escape for real "-" chars,
+    # making paths like "work-projects/lecture-claude-superuser" ambiguous.
+    for line in reversed(lines):
+        if '"cwd"' not in line:
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        cwd = obj.get("cwd")
+        if isinstance(cwd, str) and cwd:
+            return cwd
+    return None
+
+
 def get_session_title(lines: list[str]) -> str | None:
     """Extract session title from JSONL: prefer custom-title over ai-title."""
     for line in reversed(lines):

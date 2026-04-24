@@ -58,6 +58,7 @@ from config import (  # noqa: E402
 )
 from jsonl_scan import (  # noqa: E402
     extract_current_activity,
+    extract_cwd,
     extract_last_assistant_model_and_thinking,
     extract_last_assistant_text,
     extract_last_todo,
@@ -75,7 +76,7 @@ from process_monitor import (  # noqa: E402
     is_pid_alive,
 )
 from query_helpers import get_account_email, get_rate_limits, read_json  # noqa: E402
-from utils import friendly_project_name, time_ago  # noqa: E402
+from utils import abbreviate_home, friendly_project_name, time_ago  # noqa: E402
 
 # Load annotations on startup (was _load_annotations() in the monolith).
 load_annotations()
@@ -1035,6 +1036,7 @@ def focus_warp_tab(session_name: str, cwd: str = "", session_id: str = "",
     weak_indices_as = "{" + ", ".join(str(i + 1) for i in sorted(cwd_candidate_indices)) + "}"
     if not cwd_candidate_indices:
         weak_indices_as = "{}"
+    has_weak_as = "true" if cwd_candidate_indices else "false"
 
     # AppleScript strategy:
     #   Phase 1 (strong): for every Warp window, raise it, then cycle tabs
@@ -1108,11 +1110,50 @@ def focus_warp_tab(session_name: str, cwd: str = "", session_id: str = "",
             return 0
         end matchAllCands
 
+        -- Poll `name of window 1` until its stripped title differs from
+        -- `previous`, up to maxMs. The tab-switch keystroke and AXRaise
+        -- return before Warp has updated the window title, so a fixed
+        -- delay either reads a stale title (missed match, or a spurious
+        -- equality with the anchor that exits the cycle after one tab)
+        -- or is pessimistically slow. Adaptive polling fixes the race
+        -- without adding latency when the system is responsive. On
+        -- timeout we return the last stripped read — same fallback as
+        -- the previous fixed-delay code. IMPORTANT: AppleScript handlers
+        -- do NOT inherit the caller's `tell` target. Without the explicit
+        -- `tell application "System Events" ...` below, `name of window 1`
+        -- addresses nothing and returns "" every poll, causing the gate
+        -- to time out on every iteration (300ms × 40+ steps = several
+        -- seconds of false "not found"). Found via live debugging.
+        on waitForTitleChange(previous, maxMs)
+            set pollMs to 15
+            set maxIters to maxMs div pollMs
+            if maxIters < 1 then set maxIters to 1
+            set curStripped to previous
+            repeat with i from 1 to maxIters
+                set curRaw to ""
+                try
+                    tell application "System Events" to tell process "Warp" to set curRaw to name of window 1
+                end try
+                set curStripped to my stripGlyph(curRaw)
+                if curStripped is not equal to previous then return curStripped
+                delay 0.015
+            end repeat
+            return curStripped
+        end waitForTitleChange
+
         set cands to {as_list}
         set weakIndices to {weak_indices_as}
+        set hasWeak to {has_weak_as}
+        if hasWeak then
+            set phaseCount to 2
+        else
+            -- No cwd-derived candidates → phase 2 would be identical to
+            -- phase 1 and purely wasted work. Skip it.
+            set phaseCount to 1
+        end if
 
         tell application "Warp" to activate
-        delay 0.08
+        delay 0.05
         tell application "System Events"
             tell process "Warp"
                 set winList to every window
@@ -1123,20 +1164,21 @@ def focus_warp_tab(session_name: str, cwd: str = "", session_id: str = "",
                 -- session_name) only; phase 2 accepts WEAK (cwd) candidates.
                 -- Never short-circuit on a weak match while a strong one
                 -- might still be hiding in an unvisited tab.
-                repeat with phase from 1 to 2
+                repeat with phase from 1 to phaseCount
                     set allowWeak to (phase is 2)
+                    set beforeRaise to ""
                     repeat with wi from 1 to winCount
                         set w to item wi of winList
                         try
                             perform action "AXRaise" of w
                         end try
-                        delay 0.08
 
-                        set anchorRaw to ""
-                        try
-                            set anchorRaw to name of window 1
-                        end try
-                        set anchorStripped to my stripGlyph(anchorRaw)
+                        -- Wait for the window title to reflect the newly-raised
+                        -- window (up to 120ms). On the first iteration
+                        -- beforeRaise is "" so the helper returns as soon as a
+                        -- non-empty title appears, or times out if the raise
+                        -- didn't change anything.
+                        set anchorStripped to my waitForTitleChange(beforeRaise, 120)
 
                         set hit to my matchAllCands(anchorStripped, cands, weakIndices, allowWeak)
                         if hit > 0 then
@@ -1146,14 +1188,15 @@ def focus_warp_tab(session_name: str, cwd: str = "", session_id: str = "",
                         -- Cycle forward up to 20 tabs, stopping when we loop
                         -- back to the anchor title (or hit the cap). 20 is a
                         -- safety cap — Warp tab strips typically hold ≤12.
+                        -- `prev` tracks the previously-visited tab's title so
+                        -- the gate works on every step — comparing only
+                        -- against anchorStripped would let stale reads from
+                        -- tabs two steps back return instantly and defeat the
+                        -- race protection.
+                        set prev to anchorStripped
                         repeat with step from 1 to 20
                             key code 30 using {{command down, shift down}}
-                            delay 0.05
-                            set curRaw to ""
-                            try
-                                set curRaw to name of window 1
-                            end try
-                            set curStripped to my stripGlyph(curRaw)
+                            set curStripped to my waitForTitleChange(prev, 120)
                             if curStripped is equal to anchorStripped then
                                 exit repeat
                             end if
@@ -1161,7 +1204,15 @@ def focus_warp_tab(session_name: str, cwd: str = "", session_id: str = "",
                             if hit > 0 then
                                 return "found:" & (hit - 1) & ":" & curStripped
                             end if
+                            set prev to curStripped
                         end repeat
+
+                        -- Seed the next window's gate with the actual last
+                        -- title we saw (prev), not anchorStripped — on
+                        -- wrap-around they're equal, but on the 20-cap path
+                        -- they aren't, and anchorStripped would make the
+                        -- next waitForTitleChange return immediately.
+                        set beforeRaise to prev
                     end repeat
                 end repeat
 
@@ -1186,12 +1237,11 @@ def focus_warp_tab(session_name: str, cwd: str = "", session_id: str = "",
             except ValueError:
                 matched_idx = -1
             resp = {"ok": True, "action": "focused", "detail": f"Focused tab: {tab_name}"}
-            # Warn when we fell through to the cwd-basename candidate and
+            # Warn when we fell through to a cwd-derived candidate and
             # another live session shares this cwd — the match is not
             # guaranteed to be the right tab. UI surfaces this as a toast
             # pointing at the SessionStart hook install docs.
-            if (matched_idx == cwd_candidate_index and cwd_candidate_index >= 0
-                    and cwd_live_siblings > 0):
+            if matched_idx in cwd_candidate_indices and cwd_live_siblings > 0:
                 resp["warning"] = "ambiguous_cwd"
                 resp["detail"] = (
                     f"Focused a tab in '{cwd_base}', but {cwd_live_siblings + 1} live "
@@ -1364,7 +1414,12 @@ def collect_sessions() -> dict:
 
                     pid_info = pid_map.get(session_id, {})
                     pid = pid_info.get("pid")
-                    cwd = pid_info.get("cwd", "")
+                    # Prefer the live process cwd (always current). Fall back to the
+                    # cwd recorded in the JSONL — the folder name under
+                    # ~/.claude/projects/ encodes "/" as "-" with no escape for real
+                    # "-" chars, so decoding it is lossy. The JSONL field is ground
+                    # truth and works for dead sessions too.
+                    cwd = pid_info.get("cwd", "") or (extract_cwd(lines) or "")
                     kind = pid_info.get("kind", "")
                     session_name = pid_info.get("name", "") or get_session_title(lines) or ""
                     alive = is_pid_alive(pid) if pid else False
@@ -1548,7 +1603,9 @@ def collect_sessions() -> dict:
                     sessions.append({
                         "session_id": session_id,
                         "session_name": session_name,
-                        "project": friendly_project_name(project_dir),
+                        # Prefer an authoritative cwd — decoding the project folder
+                        # name is lossy (dash/slash ambiguity).
+                        "project": abbreviate_home(cwd) if cwd else friendly_project_name(project_dir),
                         "cwd": cwd,
                         "status": status,
                         "pid": pid,

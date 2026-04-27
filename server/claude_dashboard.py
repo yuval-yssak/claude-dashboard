@@ -1006,8 +1006,8 @@ def focus_warp_tab(session_name: str, cwd: str = "", session_id: str = "",
     accepted on a second pass after all strong candidates fail.
 
     Match is exact-or-truncation-suffix: Warp truncates long titles with a
-    leading ".." prefix (e.g. "..ripts/claude-dashboard" for the full
-    "scripts/claude-dashboard").
+    leading ".." prefix (e.g. "..ects/claude-dashboard" for the full
+    "personal-projects/claude-dashboard").
     """
     # Build ordered match candidates, most-specific first.
     candidates: list[str] = []

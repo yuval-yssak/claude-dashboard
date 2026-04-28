@@ -93,7 +93,13 @@ export const SessionCard = forwardRef<HTMLDivElement, SessionCardProps>(
 		};
 
 		return (
-			<div ref={ref} className={classes} onKeyDown={handleKeyDown} tabIndex={0}>
+			<div
+				ref={ref}
+				className={classes}
+				onKeyDown={handleKeyDown}
+				tabIndex={0}
+				data-session-id={s.session_id}
+			>
 				<div className="card-top">
 					<div className="card-top-title">
 						{s.session_name && (

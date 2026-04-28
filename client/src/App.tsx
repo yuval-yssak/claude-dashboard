@@ -1,12 +1,37 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { openSession, saveAnnotation } from "./api";
 import { AccountSection } from "./components/AccountSection";
 import { Header } from "./components/Header";
+import { PipMiniDashboard, type PipMode } from "./components/PipMiniDashboard";
+import { PipPortal } from "./components/PipPortal";
 import { SummaryBar } from "./components/SummaryBar";
 import { Toast } from "./components/Toast";
 import { useDebouncedSave } from "./hooks/useDebouncedSave";
+import { isDocumentPipSupported, useDocumentPip } from "./hooks/useDocumentPip";
 import { type ConnectionStatus, useSSE } from "./hooks/useSSE";
 import type { DashboardData, Session } from "./types";
+
+const PIP_DIMENSIONS: Record<PipMode, { width: number; height: number }> = {
+	count: { width: 220, height: 110 },
+	thinking: { width: 300, height: 320 },
+	active: { width: 340, height: 380 },
+};
+
+const NEXT_PIP_MODE: Record<PipMode, PipMode> = {
+	count: "thinking",
+	thinking: "active",
+	active: "count",
+};
+
+const PIP_MODE_STORAGE_KEY = "dashboard-pip-mode";
+
+const loadPipMode = (): PipMode => {
+	const stored = localStorage.getItem(PIP_MODE_STORAGE_KEY);
+	if (stored === "count" || stored === "thinking" || stored === "active") {
+		return stored;
+	}
+	return "count";
+};
 
 function App() {
 	const [data, setData] = useState<DashboardData | null>(null);
@@ -31,6 +56,16 @@ function App() {
 	const [, setRenderTick] = useState(0);
 	const [connectionStatus, setConnectionStatus] =
 		useState<ConnectionStatus>("connecting");
+	const [pipMode, setPipMode] = useState<PipMode>(loadPipMode);
+	const pipSupported = isDocumentPipSupported();
+	const {
+		pipWindow,
+		open: openPip,
+		close: closePip,
+		resize: resizePip,
+		reopenPending: pipReopenPending,
+		dismissReopen: dismissPipReopen,
+	} = useDocumentPip();
 
 	const openPanelsRef = useRef(new Set<string>());
 	const activeEditsRef = useRef(new Set<string>());
@@ -206,6 +241,45 @@ function App() {
 		});
 	}, []);
 
+	const handleTogglePip = useCallback(() => {
+		if (pipWindow) {
+			closePip();
+			return;
+		}
+		const dims = PIP_DIMENSIONS[pipMode];
+		openPip(dims).catch(() => {
+			// Clear the reopen-pending hint so the user isn't nagged repeatedly
+			// if Chrome rejects the request (e.g., gesture expired).
+			dismissPipReopen();
+			showToast("Failed to open picture-in-picture window");
+		});
+	}, [pipWindow, pipMode, openPip, closePip, dismissPipReopen, showToast]);
+
+	const handleCyclePipMode = useCallback(() => {
+		setPipMode((prev) => {
+			const next = NEXT_PIP_MODE[prev];
+			localStorage.setItem(PIP_MODE_STORAGE_KEY, next);
+			return next;
+		});
+	}, []);
+
+	const previousPipModeRef = useRef<PipMode>(pipMode);
+	useEffect(() => {
+		// Only resize on a real mode change. resizeTo() also requires user
+		// activation in document-PiP; firing it on the initial pipWindow
+		// transition (before any user gesture in the PiP) throws NotAllowedError
+		// and breaks the React render cycle. The initial open already uses the
+		// dimensions that match the current mode, so we skip the first run.
+		if (!pipWindow) {
+			previousPipModeRef.current = pipMode;
+			return;
+		}
+		if (previousPipModeRef.current === pipMode) return;
+		previousPipModeRef.current = pipMode;
+		const dims = PIP_DIMENSIONS[pipMode];
+		resizePip(dims.width, dims.height);
+	}, [pipMode, pipWindow, resizePip]);
+
 	const handleToggleStrictUnknown = useCallback(() => {
 		setStrictUnknown((prev) => {
 			const next = !prev;
@@ -241,7 +315,21 @@ function App() {
 			<Header
 				generatedAt={data?.generated_at ?? null}
 				connectionStatus={connectionStatus}
+				pipSupported={pipSupported}
+				pipActive={pipWindow !== null}
+				pipReopenPending={pipReopenPending && pipWindow === null}
+				onTogglePip={handleTogglePip}
 			/>
+			{data && (
+				<PipPortal pipWindow={pipWindow}>
+					<PipMiniDashboard
+						accounts={data.accounts}
+						mode={pipMode}
+						onCycleMode={handleCyclePipMode}
+						onFocusSession={handleOpenSession}
+					/>
+				</PipPortal>
+			)}
 			{data && <SummaryBar accounts={data.accounts} />}
 			{data && totalSessions > 0 && (
 				<div className="filter-row">

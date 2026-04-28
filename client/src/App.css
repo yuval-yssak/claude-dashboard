@@ -1285,3 +1285,210 @@ body {
 	font-weight: 700;
 	color: var(--text);
 }
+
+/* Picture-in-picture toggle button (lives in main window header) */
+.pip-toggle {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	background: var(--surface2);
+	color: var(--text-dim);
+	border: 1px solid var(--border);
+	border-radius: 6px;
+	padding: 3px 8px;
+	font-size: 11px;
+	font-weight: 600;
+	cursor: pointer;
+	margin-right: 12px;
+	transition:
+		color 0.15s,
+		border-color 0.15s,
+		background 0.15s;
+}
+.pip-toggle:hover {
+	color: var(--text);
+	border-color: var(--accent);
+}
+.pip-toggle.active {
+	color: var(--accent);
+	border-color: var(--accent);
+	background: var(--surface3);
+}
+/* PiP was open before a reload; user gesture is required to reopen, so we
+   draw attention to the button instead of failing silently. */
+.pip-toggle.reopen-pending {
+	color: var(--accent);
+	border-color: var(--accent);
+	animation: pip-reopen-pulse 2s ease-in-out infinite;
+}
+@keyframes pip-reopen-pulse {
+	0%,
+	100% {
+		box-shadow: 0 0 0 0 rgba(196, 149, 106, 0.6);
+	}
+	50% {
+		box-shadow: 0 0 0 4px rgba(196, 149, 106, 0);
+	}
+}
+
+/* Picture-in-picture mini dashboard (rendered inside the PiP document). */
+.pip-app {
+	display: flex;
+	flex-direction: column;
+	height: 100vh;
+	width: 100vw;
+	font-family:
+		-apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui,
+		sans-serif;
+	background: var(--bg);
+	color: var(--text);
+	font-size: 12px;
+	overflow: hidden;
+}
+.pip-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	padding: 6px 8px;
+	border-bottom: 1px solid var(--border);
+	background: var(--surface);
+	flex-shrink: 0;
+}
+.pip-cycle {
+	background: var(--surface2);
+	color: var(--accent);
+	border: 1px solid var(--border);
+	border-radius: 4px;
+	padding: 2px 8px;
+	font-size: 10px;
+	font-weight: 700;
+	text-transform: uppercase;
+	letter-spacing: 0.5px;
+	cursor: pointer;
+}
+.pip-cycle:hover {
+	border-color: var(--accent);
+}
+.pip-body {
+	flex: 1;
+	overflow-y: auto;
+	display: flex;
+	flex-direction: column;
+}
+.pip-count {
+	flex: 1;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	gap: 2px;
+	padding: 8px;
+}
+.pip-count-number {
+	font-size: 36px;
+	font-weight: 700;
+	line-height: 1;
+	color: var(--thinking);
+}
+.pip-count-icon {
+	font-size: 28px;
+	color: var(--thinking);
+	font-weight: 700;
+}
+.pip-count-label {
+	font-size: 11px;
+	color: var(--text-dim);
+	text-transform: uppercase;
+	letter-spacing: 1px;
+}
+.pip-count-clear .pip-count-icon,
+.pip-count-clear .pip-count-label {
+	color: var(--text-dim);
+}
+.pip-list {
+	display: flex;
+	flex-direction: column;
+	gap: 1px;
+	padding: 4px;
+}
+.pip-row {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 5px 6px;
+	background: var(--surface);
+	border: 1px solid transparent;
+	border-radius: 4px;
+	cursor: pointer;
+	color: var(--text);
+	text-align: left;
+	font-size: 11px;
+	width: 100%;
+}
+.pip-row:hover {
+	border-color: var(--accent);
+	background: var(--surface2);
+}
+.pip-dot {
+	width: 6px;
+	height: 6px;
+	border-radius: 50%;
+	flex-shrink: 0;
+}
+.pip-dot-thinking {
+	background: var(--thinking);
+}
+.pip-dot-subagent {
+	background: var(--subagent);
+}
+.pip-dot-hook {
+	background: var(--hook);
+}
+.pip-dot-questioning {
+	background: var(--questioning);
+}
+.pip-dot-approving {
+	background: var(--approving);
+}
+.pip-dot-waiting {
+	background: var(--waiting);
+}
+.pip-row-title {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.pip-row-status {
+	font-size: 9px;
+	color: var(--text-dim);
+	text-transform: uppercase;
+	letter-spacing: 0.5px;
+	flex-shrink: 0;
+	white-space: nowrap;
+	padding-left: 8px;
+	padding-right: 4px;
+}
+.pip-empty {
+	flex: 1;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	color: var(--text-dim);
+	font-size: 11px;
+	font-style: italic;
+}
+.pip-flash {
+	animation: pip-cleared-pulse 1.5s ease-out;
+}
+@keyframes pip-cleared-pulse {
+	0% {
+		background: var(--thinking);
+		color: var(--bg);
+	}
+	100% {
+		background: var(--surface);
+		color: var(--text);
+	}
+}

@@ -46,6 +46,8 @@ export function Header({
 						className={pipBtnClass}
 						onClick={onTogglePip}
 						title={pipBtnTitle}
+						data-hint-target=""
+						data-hint-scope="outline"
 					>
 						<svg
 							width="14"

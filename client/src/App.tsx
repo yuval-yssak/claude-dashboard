@@ -2,12 +2,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { openSession, saveAnnotation } from "./api";
 import { AccountSection } from "./components/AccountSection";
 import { Header } from "./components/Header";
+import { HintOverlay } from "./components/HintOverlay";
 import { PipMiniDashboard, type PipMode } from "./components/PipMiniDashboard";
 import { PipPortal } from "./components/PipPortal";
 import { SummaryBar } from "./components/SummaryBar";
 import { Toast } from "./components/Toast";
 import { useDebouncedSave } from "./hooks/useDebouncedSave";
 import { isDocumentPipSupported, useDocumentPip } from "./hooks/useDocumentPip";
+import { useHintMode } from "./hooks/useHintMode";
 import { type ConnectionStatus, useSSE } from "./hooks/useSSE";
 import type { DashboardData, Session } from "./types";
 
@@ -73,6 +75,7 @@ function App() {
 	const toastTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
 	const debounce = useDebouncedSave();
+	const hintMode = useHintMode();
 
 	const showToast = useCallback((msg: string, durationMs = 3000) => {
 		setToastMessage(msg);
@@ -339,12 +342,16 @@ function App() {
 						placeholder="Filter by name, project, branch, status..."
 						value={searchQuery}
 						onChange={(e) => setSearchQuery(e.target.value)}
+						data-hint-target=""
+						data-hint-scope="outline"
 					/>
 					<button
 						type="button"
 						className={`workspace-toggle ${personalFirst ? "personal" : "work"}`}
 						onClick={handleToggleWorkspace}
 						title={personalFirst ? "Personal on top" : "Work on top"}
+						data-hint-target=""
+						data-hint-scope="outline"
 					>
 						<span className="workspace-toggle-label">
 							{personalFirst ? "Personal" : "Work"}
@@ -360,6 +367,8 @@ function App() {
 								? "Hiding idle and recent sessions"
 								: "Showing all sessions"
 						}
+						data-hint-target=""
+						data-hint-scope="outline"
 					>
 						<span className="workspace-toggle-label">
 							{hideInactive ? "Active only" : "Show all"}
@@ -377,6 +386,8 @@ function App() {
 								? "Strict: show unknown when mode/plan must be inferred"
 								: "Lenient: trust inferred mode/plan signals"
 						}
+						data-hint-target=""
+						data-hint-scope="outline"
 					>
 						<span className="workspace-toggle-label">
 							{strictUnknown ? "Strict" : "Lenient"}
@@ -409,6 +420,12 @@ function App() {
 					/>
 				))}
 			<Toast message={toastMessage} />
+			<HintOverlay
+				state={hintMode.state}
+				computeAssignments={hintMode.computeAssignments}
+				assignmentsRef={hintMode.assignmentsRef}
+				refresh={hintMode.refresh}
+			/>
 		</>
 	);
 }

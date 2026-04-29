@@ -18,7 +18,24 @@ export function PlanViewer({
 }: PlanViewerProps) {
 	const [isModalOpen, setIsModalOpen] = useState(false);
 
-	if (!planPath) return null;
+	// Reserve a hint slot even when no plan exists, so per-card hint letters
+	// stay stable across cards. The placeholder is visually hidden but keeps
+	// the same data-hint-target attributes — pressing the hint shows a tooltip
+	// explaining there's no plan rather than navigating.
+	if (!planPath) {
+		return (
+			<button
+				type="button"
+				className="plan-placeholder"
+				data-hint-target=""
+				data-hint-scope="card"
+				data-hint-card-id={sessionId}
+				data-hint-label="No plan file for this session"
+				aria-hidden="true"
+				tabIndex={-1}
+			/>
+		);
+	}
 
 	const fileName = basename(planPath);
 
@@ -27,6 +44,9 @@ export function PlanViewer({
 			<button
 				type="button"
 				className="plan-header"
+				data-hint-target=""
+				data-hint-scope="card"
+				data-hint-card-id={sessionId}
 				onClick={() => setIsModalOpen(true)}
 				title={planPath}
 			>

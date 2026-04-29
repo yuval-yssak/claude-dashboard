@@ -31,6 +31,8 @@ tailscale serve --bg --https=443 http://localhost:8484
 
 No automated test suite — manual test scenarios are in `docs/TESTING.md`.
 
+**Browser verification: always use http://localhost:8484, not :5173.** The user runs the dashboard in production-style mode against the Python backend, which serves the built SPA at `/`. After making frontend changes you want the user to verify, run `cd client && npm run build` so the change is reflected at :8484. The Vite dev server at :5173 is only relevant if `npm run dev` is actively running, which is not the default workflow.
+
 ## Architecture
 
 ```

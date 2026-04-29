@@ -12,6 +12,7 @@ import {
 import {
 	rectSortingStrategy,
 	SortableContext,
+	sortableKeyboardCoordinates,
 	useSortable,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
@@ -148,7 +149,10 @@ export function AccountSection({
 		useSensor(TouchSensor, {
 			activationConstraint: { delay: 250, tolerance: 5 },
 		}),
-		useSensor(KeyboardSensor),
+		// sortableKeyboardCoordinates makes each arrow press jump straight to the
+		// neighboring sortable's center, so keyboard drag swaps with the next card
+		// rather than translating a fixed number of pixels per press.
+		useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
 	);
 
 	const handleDragStart = useCallback(

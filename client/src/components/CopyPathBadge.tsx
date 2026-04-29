@@ -12,7 +12,7 @@ export function CopyPathBadge({
 	jsonlPath,
 	onCopied,
 }: CopyPathBadgeProps) {
-	const anchorRef = useRef<HTMLSpanElement>(null);
+	const anchorRef = useRef<HTMLButtonElement>(null);
 	const [rect, setRect] = useState<DOMRect | null>(null);
 
 	const onShow = () => {
@@ -28,9 +28,14 @@ export function CopyPathBadge({
 	};
 
 	return (
-		<span
+		<button
+			type="button"
 			ref={anchorRef}
 			className="jsonl-link"
+			data-hint-target=""
+			data-hint-scope="card"
+			data-hint-card-id={sessionId}
+			data-hint-label="Copy JSONL path"
 			onMouseEnter={onShow}
 			onMouseLeave={onHide}
 			onFocus={onShow}
@@ -39,7 +44,7 @@ export function CopyPathBadge({
 		>
 			{sessionId}
 			{rect && <CopyPathTooltip rect={rect} jsonlPath={jsonlPath} />}
-		</span>
+		</button>
 	);
 }
 

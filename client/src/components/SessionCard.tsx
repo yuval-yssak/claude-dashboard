@@ -77,6 +77,10 @@ export const SessionCard = forwardRef<HTMLDivElement, SessionCardProps>(
 			.filter(Boolean)
 			.join(" ");
 
+		const hintLabel = s.session_name
+			? `Session: ${s.session_name} (${s.project})`
+			: `Session: ${s.project}`;
+
 		const handleKeyDown = (e: React.KeyboardEvent) => {
 			if (!onMoveCard || !e.ctrlKey) return;
 			const dirMap: Record<string, "up" | "down" | "left" | "right"> = {
@@ -99,6 +103,10 @@ export const SessionCard = forwardRef<HTMLDivElement, SessionCardProps>(
 				onKeyDown={handleKeyDown}
 				tabIndex={0}
 				data-session-id={s.session_id}
+				data-hint-target=""
+				data-hint-scope="outline"
+				data-hint-card-id={s.session_id}
+				data-hint-label={hintLabel}
 			>
 				<div className="card-top">
 					<div className="card-top-title">
@@ -108,31 +116,48 @@ export const SessionCard = forwardRef<HTMLDivElement, SessionCardProps>(
 						<div className="project-name">{s.project}</div>
 					</div>
 					<div className="card-top-right">
-						<button
-							type="button"
-							className="drag-handle"
-							title="Drag to reorder"
-							{...(dragHandleProps || {})}
-						>
-							<svg
-								width="12"
-								height="18"
-								viewBox="0 0 12 18"
-								fill="currentColor"
+						<div className="drag-handle-wrapper">
+							<button
+								type="button"
+								className="drag-handle"
+								title="Drag to reorder (Space picks up, arrows move, Space drops, Esc cancels)"
+								data-hint-target=""
+								data-hint-scope="card"
+								data-hint-card-id={s.session_id}
+								data-hint-action="focus"
+								data-hint-label="Drag to reorder (keyboard mode)"
+								data-hint-suppress="true"
+								{...(dragHandleProps || {})}
 							>
-								<circle cx="3" cy="3" r="1.5" />
-								<circle cx="9" cy="3" r="1.5" />
-								<circle cx="3" cy="9" r="1.5" />
-								<circle cx="9" cy="9" r="1.5" />
-								<circle cx="3" cy="15" r="1.5" />
-								<circle cx="9" cy="15" r="1.5" />
-							</svg>
-						</button>
+								<svg
+									width="12"
+									height="18"
+									viewBox="0 0 12 18"
+									fill="currentColor"
+								>
+									<circle cx="3" cy="3" r="1.5" />
+									<circle cx="9" cy="3" r="1.5" />
+									<circle cx="3" cy="9" r="1.5" />
+									<circle cx="9" cy="9" r="1.5" />
+									<circle cx="3" cy="15" r="1.5" />
+									<circle cx="9" cy="15" r="1.5" />
+								</svg>
+							</button>
+							{/* Shown only while the drag handle has keyboard focus — teaches
+							    the dnd-kit keyboard sensor controls. Hidden again on blur. */}
+							<div className="drag-instructions" role="tooltip">
+								<strong>Space</strong> picks up · <strong>↑↓←→</strong> move ·{" "}
+								<strong>Space</strong> drops · <strong>Esc</strong> cancels
+							</div>
+						</div>
 						{onTogglePin && (
 							<button
 								type="button"
 								className={`pin-btn${isPinned ? " pinned" : ""}`}
 								title={isPinned ? "Unpin from top" : "Pin to top"}
+								data-hint-target=""
+								data-hint-scope="card"
+								data-hint-card-id={s.session_id}
 								onClick={(e) => {
 									e.stopPropagation();
 									onTogglePin();
@@ -157,6 +182,9 @@ export const SessionCard = forwardRef<HTMLDivElement, SessionCardProps>(
 							type="button"
 							className={`open-btn${loading ? " loading" : ""}`}
 							title={openTitle}
+							data-hint-target=""
+							data-hint-scope="card"
+							data-hint-card-id={s.session_id}
 							onClick={(e) => {
 								e.stopPropagation();
 								onOpenSession();

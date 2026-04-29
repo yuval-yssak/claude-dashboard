@@ -313,6 +313,44 @@ body {
 .drag-handle:active {
 	cursor: grabbing;
 }
+/* Keep drag handle visible whenever it has focus, so the user can see what
+   they're about to drag with the keyboard. */
+.drag-handle:focus,
+.drag-handle:focus-visible {
+	opacity: 1;
+	color: var(--accent);
+	background: var(--surface2);
+	outline: 2px solid var(--accent);
+	outline-offset: 1px;
+}
+.drag-handle-wrapper {
+	position: relative;
+	display: flex;
+}
+/* Drag instructions panel — appears only while the drag handle is focused
+   (keyboard activation flow). Anchored below the handle with fixed-ish layout. */
+.drag-instructions {
+	display: none;
+	position: absolute;
+	top: calc(100% + 6px);
+	right: 0;
+	white-space: nowrap;
+	background: var(--surface2);
+	color: var(--text);
+	font-size: 11px;
+	padding: 6px 10px;
+	border: 1px solid var(--accent);
+	border-radius: 4px;
+	box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+	z-index: 100;
+}
+.drag-instructions strong {
+	color: var(--accent);
+	font-weight: 700;
+}
+.drag-handle-wrapper:focus-within .drag-instructions {
+	display: block;
+}
 
 /* Pin button */
 .pin-btn {
@@ -561,6 +599,11 @@ body {
 	max-width: 100%;
 }
 .card-meta .jsonl-link {
+	/* Native <button> resets so this looks like the original inline span. */
+	background: none;
+	border: none;
+	padding: 0;
+	font: inherit;
 	color: var(--text-dim);
 	cursor: pointer;
 	white-space: nowrap;
@@ -575,6 +618,43 @@ body {
 	margin-top: 12px;
 	padding-top: 10px;
 	border-top: 1px solid var(--border);
+}
+/* Invisible 1×1 hint slot used when a card has no plan, so hint letters stay
+   stable from card to card. The hint engine filters zero-size boxes, so the
+   placeholder must be measurable. Positioned at the card's bottom-left so the
+   hint pill sits at the same place the real plan button would appear. */
+.plan-placeholder {
+	display: block;
+	width: 1px;
+	height: 1px;
+	margin-top: 12px;
+	padding: 0;
+	background: transparent;
+	border: none;
+	opacity: 0;
+	pointer-events: none;
+}
+
+/* Generic hint proxy: invisible 1×1 button that reserves a hint-letter slot.
+   Lives inside a positioned wrapper next to the input it represents, so its
+   hint pill anchors to the left edge of the input at vertical center. */
+.hint-proxy {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	padding: 0;
+	background: transparent;
+	border: none;
+	opacity: 0;
+	pointer-events: none;
+	left: 0;
+	top: 50%;
+}
+.notes-row {
+	position: relative;
+}
+.add-todo-row {
+	position: relative;
 }
 .plan-header {
 	display: flex;
@@ -846,13 +926,37 @@ body {
 }
 
 /* ---- User annotations section ---- */
+/* Children use CSS `order` to keep visual layout (preview/tasks first, then
+   edit toggle, then expanded body) while DOM order is driven by hint-letter
+   stability: edit-toggle (H) → notes textarea (I) → add-task (J) → preview
+   → tasks (K…). Letters never shift when notes/tasks appear or disappear. */
 .annotations-section {
 	margin-top: 12px;
 	padding-top: 10px;
 	border-top: 1px solid var(--border);
+	display: flex;
+	flex-direction: column;
+}
+.annotations-section .notes-preview {
+	order: 1;
+}
+.annotations-section .user-todos-inline {
+	order: 2;
+}
+.annotations-section .annotations-edit-toggle {
+	order: 3;
+}
+.annotations-section .annotations-body {
+	order: 4;
 }
 
 .notes-preview {
+	/* Native <button> resets so this looks like the original click-div. */
+	background: none;
+	border: none;
+	font: inherit;
+	text-align: left;
+	width: 100%;
 	font-size: 12px;
 	color: var(--text-dim);
 	line-height: 1.4;
@@ -886,6 +990,12 @@ body {
 }
 
 .annotations-edit-toggle {
+	/* Native <button> resets so this looks like the original click-div. */
+	background: none;
+	border: none;
+	padding: 0;
+	font: inherit;
+	text-align: left;
 	font-size: 10px;
 	font-weight: 500;
 	color: var(--text-dim);
@@ -1491,4 +1601,74 @@ body {
 		background: var(--surface);
 		color: var(--text);
 	}
+}
+
+/* Keyboard hint overlay (Vimium-style) */
+.hint-overlay {
+	position: fixed;
+	inset: 0;
+	pointer-events: none;
+	z-index: 9999;
+}
+.hint-label {
+	position: fixed;
+	background: var(--accent);
+	color: var(--bg);
+	font-family: -apple-system, "SF Mono", Menlo, monospace;
+	font-size: 10px;
+	font-weight: 700;
+	letter-spacing: 0.5px;
+	text-transform: uppercase;
+	padding: 1px 4px;
+	border-radius: 3px;
+	box-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
+	/* Above most card content but below modals; hint-overlay container handles z-index. */
+	transform: translate(-30%, -50%);
+	white-space: nowrap;
+	transition: opacity 0.1s;
+	/* Re-enable pointer events on individual pills so the tooltip shows on
+	   hover — the parent .hint-overlay disables them so clicks pass through. */
+	pointer-events: auto;
+	cursor: help;
+}
+.hint-label.dimmed {
+	opacity: 0.3;
+}
+/* Custom hover tooltip — more reliable than native title (no 700ms delay,
+   not destroyed on re-render, consistent with dashboard styling). */
+.hint-label::after {
+	content: attr(data-tooltip);
+	position: absolute;
+	left: 50%;
+	bottom: calc(100% + 6px);
+	transform: translateX(-50%);
+	background: var(--surface2);
+	color: var(--text);
+	border: 1px solid var(--accent);
+	border-radius: 4px;
+	padding: 4px 8px;
+	font-size: 11px;
+	font-weight: 500;
+	letter-spacing: 0;
+	text-transform: none;
+	white-space: nowrap;
+	box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+	opacity: 0;
+	pointer-events: none;
+	transition: opacity 0.1s;
+	z-index: 1;
+}
+/* Edge-aware anchoring so tooltips don't clip off the viewport. The classes
+   are toggled by HintOverlay based on each pill's viewport left position. */
+.hint-label.tooltip-anchor-left::after {
+	left: 0;
+	transform: translateX(0);
+}
+.hint-label.tooltip-anchor-right::after {
+	left: auto;
+	right: 0;
+	transform: translateX(0);
+}
+.hint-label:hover::after {
+	opacity: 1;
 }

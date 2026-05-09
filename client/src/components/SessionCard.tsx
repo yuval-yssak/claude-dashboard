@@ -3,6 +3,7 @@ import type { Session } from "../types";
 import { AnnotationsPanel } from "./AnnotationsPanel";
 import { ClaudeTodos } from "./ClaudeTodos";
 import { CopyPathBadge } from "./CopyPathBadge";
+import { HostBadge } from "./HostBadge";
 import { ModeBadge } from "./ModeBadge";
 import { ModelBadge } from "./ModelBadge";
 import { PlanViewer } from "./PlanViewer";
@@ -111,9 +112,15 @@ export const SessionCard = forwardRef<HTMLDivElement, SessionCardProps>(
 				<div className="card-top">
 					<div className="card-top-title">
 						{s.session_name && (
-							<div className="session-name">{s.session_name}</div>
+							<div className="session-name">
+								<HostBadge host={s.host} />
+								{s.session_name}
+							</div>
 						)}
-						<div className="project-name">{s.project}</div>
+						<div className="project-name">
+							{!s.session_name && <HostBadge host={s.host} />}
+							{s.project}
+						</div>
 					</div>
 					<div className="card-top-right">
 						<div className="drag-handle-wrapper">

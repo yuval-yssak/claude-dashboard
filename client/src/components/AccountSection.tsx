@@ -152,7 +152,9 @@ export function AccountSection({
 		// sortableKeyboardCoordinates makes each arrow press jump straight to the
 		// neighboring sortable's center, so keyboard drag swaps with the next card
 		// rather than translating a fixed number of pixels per press.
-		useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+		useSensor(KeyboardSensor, {
+			coordinateGetter: sortableKeyboardCoordinates,
+		}),
 	);
 
 	const handleDragStart = useCallback(

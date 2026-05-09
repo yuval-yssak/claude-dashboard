@@ -56,6 +56,22 @@ export interface PlanPendingInfo {
 	};
 }
 
+export type HostId =
+	| "warp"
+	| "iterm2"
+	| "terminal"
+	| "claude-desktop"
+	| "vscode-terminal"
+	| "vscode-extension"
+	| "jetbrains-terminal"
+	| "jetbrains-extension";
+
+export interface SessionHost {
+	id: HostId;
+	label: string;
+	app: string;
+}
+
 export interface Session {
 	session_id: string;
 	session_name: string;
@@ -64,6 +80,7 @@ export interface Session {
 	status: SessionStatus;
 	pid: number | null;
 	alive: boolean;
+	host: SessionHost | null;
 	config_dir: string;
 	last_activity: string | null;
 	last_activity_ago: string;

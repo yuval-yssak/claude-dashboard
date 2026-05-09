@@ -535,6 +535,76 @@ body {
 	margin-bottom: 2px;
 	word-break: break-all;
 }
+
+/* Inline host badge next to session/project name. Each variant tints
+   itself by host kind so a glance distinguishes terminal vs IDE vs
+   desktop. Kept compact (height matches the surrounding text line)
+   so it never breaks the title's vertical rhythm. The tooltip is a
+   custom CSS pseudo-element rather than the native `title` attribute,
+   which has a 1–2s OS-level hover delay that made the badge feel
+   non-interactive. */
+.host-badge {
+	position: relative;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	min-width: 18px;
+	height: 16px;
+	padding: 0 4px;
+	margin-right: 6px;
+	border-radius: 3px;
+	font-size: 9px;
+	font-weight: 700;
+	letter-spacing: 0.3px;
+	vertical-align: middle;
+	font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+	cursor: help;
+}
+/* Anchor the tooltip BELOW the badge and aligned to its left edge.
+   The badge sits at the top-left of the card, and `.session-card`
+   uses `overflow: hidden` (so any tooltip drawn above the badge or
+   off the left edge gets clipped). Anchoring below + left keeps the
+   tooltip inside the card's visible area. */
+.host-badge::after {
+	content: attr(data-host-tooltip);
+	position: absolute;
+	top: calc(100% + 4px);
+	left: 0;
+	padding: 4px 8px;
+	background: rgba(15, 23, 42, 0.95);
+	color: #f1f5f9;
+	font-size: 11px;
+	font-weight: 500;
+	letter-spacing: 0;
+	font-family: inherit;
+	border-radius: 4px;
+	white-space: nowrap;
+	pointer-events: none;
+	opacity: 0;
+	transition: opacity 80ms ease-in;
+	z-index: 10;
+	box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+}
+.host-badge:hover::after,
+.host-badge:focus-visible::after {
+	opacity: 1;
+}
+.host-variant-terminal {
+	background: rgba(96, 165, 250, 0.18);
+	color: #93c5fd;
+}
+.host-variant-ide-terminal {
+	background: rgba(45, 212, 191, 0.18);
+	color: #5eead4;
+}
+.host-variant-ide-extension {
+	background: rgba(192, 132, 252, 0.2);
+	color: #d8b4fe;
+}
+.host-variant-desktop {
+	background: rgba(251, 146, 60, 0.2);
+	color: #fdba74;
+}
 .project-name {
 	font-size: 13px;
 	font-weight: 600;

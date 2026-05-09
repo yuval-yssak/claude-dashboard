@@ -945,26 +945,26 @@ def get_permission_mode(lines: list[str]) -> str | None:
     return info["observed"] or info["inferred"]
 
 
-def find_parent_app(pid: int) -> str | None:
-    """Walk up the process tree from *pid* to find the owning GUI application."""
-    known_apps = {
-        "warp": "Warp",
-        "code": "Visual Studio Code",
-        "code helper": "Visual Studio Code",
-        "electron": "Visual Studio Code",  # VS Code is Electron
-        "claude": "Claude",
-        "terminal": "Terminal",
-        "iterm2": "iTerm2",
-    }
+def _walk_ancestor_comms(pid: int) -> list[str]:
+    """Return identifying tokens for each ancestor of *pid*, parent-first.
+
+    Starts from the parent of *pid* (the PID itself is the claude CLI,
+    which would falsely match the "Claude" desktop app). For each
+    ancestor we yield two tokens joined by a tab: the executable
+    basename, and the ``.app`` bundle name if the path contains one.
+    macOS apps often name their executable something generic
+    (Warp's binary is ``stable``, JetBrains's is ``idea``); the
+    bundle name is the reliable identifier for matching.
+    Both tokens are lowercased; missing tokens are empty strings.
+    """
+    comms: list[str] = []
     try:
-        # Start from the parent of the given PID — the PID itself is the
-        # claude CLI, which would falsely match the "Claude" desktop app.
         boot = subprocess.run(
             ["ps", "-p", str(pid), "-o", "ppid="],
             capture_output=True, text=True, timeout=3,
         )
-        current = int(boot.stdout.strip()) if boot.stdout.strip() else pid
-        visited = set()
+        current = int(boot.stdout.strip()) if boot.stdout.strip() else 0
+        visited: set[int] = set()
         while current and current > 1 and current not in visited:
             visited.add(current)
             result = subprocess.run(
@@ -977,16 +977,102 @@ def find_parent_app(pid: int) -> str | None:
             parts = line.split(None, 1)
             if len(parts) < 2:
                 break
-            ppid = int(parts[0])
-            comm = parts[1].strip().lower()
-            # Check against known apps
-            for key, app_name in known_apps.items():
-                if key in comm:
-                    return app_name
-            current = ppid
+            comm_raw = parts[1].strip().lower()
+            base = comm_raw.rsplit("/", 1)[-1]
+            # Pull the .app bundle name (e.g. ".../Warp.app/..." → "warp")
+            # so we recognize hosts whose binary is renamed.
+            bundle = ""
+            if ".app/" in comm_raw:
+                bundle_seg = comm_raw.split(".app/", 1)[0]
+                bundle = bundle_seg.rsplit("/", 1)[-1]
+            comms.append(f"{base}\t{bundle}")
+            current = int(parts[0])
     except Exception:
         pass
+    return comms
+
+
+# JetBrains ships separate apps per language but they all share an
+# Electron-like Java launcher. We treat them as one host family because
+# their AppleScript / focus story is identical.
+_JETBRAINS_COMMS = (
+    "webstorm", "intellij idea", "idea", "pycharm", "rubymine",
+    "phpstorm", "goland", "clion", "rider", "datagrip", "appcode",
+    "androidstudio", "android studio",
+)
+
+
+def detect_session_host(pid: int, has_tty: bool) -> dict | None:
+    """Identify the host (terminal app or IDE) this session runs in.
+
+    Returns a dict ``{"id": <host_id>, "label": <display>, "app": <macOS
+    app name>}`` or None if no recognized ancestor was found.
+
+    Host IDs:
+        ``warp``, ``iterm2``, ``terminal``, ``claude-desktop``,
+        ``vscode-terminal``, ``vscode-extension``,
+        ``jetbrains-terminal``, ``jetbrains-extension``.
+
+    The TTY flag is the disambiguator inside an IDE: a child of VS Code
+    that has a controlling TTY is the integrated terminal; without one,
+    it is the in-IDE Claude extension panel. ``Claude.app`` similarly
+    launches the CLI without a TTY.
+    """
+    comms = _walk_ancestor_comms(pid)
+
+    def has_code(token: str) -> bool:
+        # Match VS Code's bundle name "code" or its renderer/extension
+        # helpers. The bundle name comes from "Visual Studio Code.app"
+        # → "visual studio code" (we substring-match for that), or
+        # plain "code" for the Insiders/CLI symlink.
+        return ("visual studio code" in token or "code helper" in token
+                or token.endswith("\tcode") or "/code helper" in token
+                or "electron" in token)
+
+    def has_jetbrains(token: str) -> bool:
+        return any(jb in token for jb in _JETBRAINS_COMMS)
+
+    code_anywhere = any(has_code(c) for c in comms)
+    jetbrains_anywhere = any(has_jetbrains(c) for c in comms)
+
+    for comm in comms:
+        # Standalone terminals are unambiguous and take priority over
+        # generic Electron matches. We check them in walk order so the
+        # nearest ancestor wins (matters when an IDE was launched from
+        # a terminal — the IDE is the immediate parent, not the shell).
+        if "warp" in comm:
+            return {"id": "warp", "label": "Warp", "app": "Warp"}
+        if "iterm" in comm:
+            return {"id": "iterm2", "label": "iTerm2", "app": "iTerm2"}
+        # Apple's Terminal.app: bundle name is exactly "terminal".
+        if "\tterminal" in comm:
+            return {"id": "terminal", "label": "Terminal", "app": "Terminal"}
+        # Claude.app (the desktop client) launches the CLI without a TTY.
+        # Match the Claude bundle name strictly so we don't pick up a
+        # parent `claude` CLI process that would indicate a subagent.
+        if "\tclaude" in comm and not has_tty:
+            return {"id": "claude-desktop", "label": "Claude Desktop", "app": "Claude"}
+        if code_anywhere and has_code(comm):
+            if has_tty:
+                return {"id": "vscode-terminal", "label": "VS Code Terminal",
+                        "app": "Visual Studio Code"}
+            return {"id": "vscode-extension", "label": "VS Code (Claude)",
+                    "app": "Visual Studio Code"}
+        if jetbrains_anywhere and has_jetbrains(comm):
+            app = "WebStorm" if "webstorm" in comm else "JetBrains IDE"
+            host_label = "WebStorm" if "webstorm" in comm else "JetBrains"
+            if has_tty:
+                return {"id": "jetbrains-terminal",
+                        "label": f"{host_label} Terminal", "app": app}
+            return {"id": "jetbrains-extension",
+                    "label": f"{host_label} (Claude)", "app": app}
     return None
+
+
+def find_parent_app(pid: int) -> str | None:
+    """Back-compat shim — returns just the macOS app name."""
+    host = detect_session_host(pid, has_tty=get_pid_tty(pid) is not None)
+    return host["app"] if host else None
 
 
 def focus_warp_tab(session_name: str, cwd: str = "", session_id: str = "",
@@ -1258,28 +1344,236 @@ def focus_warp_tab(session_name: str, cwd: str = "", session_id: str = "",
         return {"ok": False, "action": "error", "detail": str(e)}
 
 
+def get_pid_tty(pid: int) -> str | None:
+    """Return the controlling TTY device path for *pid*, or None.
+
+    The claude CLI runs in the foreground of its terminal, so its own PID
+    carries the TTY (e.g. "ttys025"). iTerm2's AppleScript model exposes
+    `tty of session` as a full device path like "/dev/ttys025", which is
+    what we need to match against. Returns the full "/dev/..." form so
+    callers can compare directly. Returns None for processes without a
+    controlling TTY (e.g. the Claude.app desktop launcher: tty="??").
+    """
+    try:
+        result = subprocess.run(
+            ["ps", "-p", str(pid), "-o", "tty="],
+            capture_output=True, text=True, timeout=3,
+        )
+        tty = result.stdout.strip()
+        if not tty or tty == "??":
+            return None
+        # `ps` prints "ttys025"; iTerm reports "/dev/ttys025". Normalize.
+        if not tty.startswith("/dev/"):
+            tty = f"/dev/{tty}"
+        return tty
+    except Exception:
+        return None
+
+
+def focus_iterm_session(tty: str) -> dict:
+    """Focus the exact iTerm2 window/tab/session whose tty matches *tty*.
+
+    Unlike Warp, iTerm2 has a real AppleScript dictionary that exposes
+    `tty of session`, so we can identify the target session by its
+    device path without keystroke cycling. We `select` the session
+    (which also selects its tab and window) and activate iTerm2.
+    """
+    if not tty:
+        return {"ok": False, "action": "no_tty",
+                "detail": "Could not determine TTY for this session"}
+
+    # iTerm2's official scripting docs (iterm2.com/documentation-scripting.html):
+    #   - `select` on a session "Makes the session active in its tab. Does not
+    #     affect which tab is selected or which window has keyboard focus."
+    #   - `select` on a tab/window "brings it to the front."
+    # So `select s` alone is insufficient — we must select the window AND
+    # the tab AND the session, in that order. Earlier code only selected
+    # the session, which left the user on whatever tab was already front.
+    # Setting `frontmost` directly on a window raises AppleEvent error
+    # -10000, so we use `tell window … select` instead.
+    apple_script = f'''
+        tell application "iTerm2"
+            activate
+            set targetWinId to missing value
+            set targetTabIdx to 0
+            repeat with w in windows
+                repeat with ti from 1 to (count of tabs of w)
+                    set t to tab ti of w
+                    repeat with s in sessions of t
+                        if (tty of s) is "{tty}" then
+                            set targetWinId to id of w
+                            set targetTabIdx to ti
+                            exit repeat
+                        end if
+                    end repeat
+                    if targetWinId is not missing value then exit repeat
+                end repeat
+                if targetWinId is not missing value then exit repeat
+            end repeat
+            if targetWinId is missing value then return "not_found"
+            tell window id targetWinId
+                select
+                tell tab targetTabIdx
+                    select
+                end tell
+            end tell
+            return "found"
+        end tell
+    '''
+    try:
+        result = subprocess.run(
+            ["osascript", "-e", apple_script],
+            capture_output=True, text=True, timeout=10,
+        )
+        output = result.stdout.strip()
+        if output == "found":
+            return {"ok": True, "action": "focused",
+                    "detail": f"Focused iTerm2 session ({tty})"}
+        return {"ok": False, "action": "not_found",
+                "detail": f"No iTerm2 session with tty {tty}"}
+    except Exception as e:
+        return {"ok": False, "action": "error", "detail": str(e)}
+
+
+def focus_terminal_app_tab(tty: str) -> dict:
+    """Focus the Terminal.app tab whose tty matches *tty*.
+
+    Terminal.app exposes `tty of selected tab of window` via AppleScript.
+    Iterating windows/tabs and setting `selected tab` + `frontmost` of
+    the matching window lands us on the exact tab.
+    """
+    if not tty:
+        return {"ok": False, "action": "no_tty",
+                "detail": "Could not determine TTY for this session"}
+    apple_script = f'''
+        tell application "Terminal"
+            activate
+            repeat with w in windows
+                repeat with t in tabs of w
+                    if (tty of t) is "{tty}" then
+                        set selected tab of w to t
+                        set frontmost of w to true
+                        return "found"
+                    end if
+                end repeat
+            end repeat
+            return "not_found"
+        end tell
+    '''
+    try:
+        result = subprocess.run(
+            ["osascript", "-e", apple_script],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.stdout.strip() == "found":
+            return {"ok": True, "action": "focused",
+                    "detail": f"Focused Terminal.app tab ({tty})"}
+        return {"ok": False, "action": "not_found",
+                "detail": f"No Terminal.app tab with tty {tty}"}
+    except Exception as e:
+        return {"ok": False, "action": "error", "detail": str(e)}
+
+
+def focus_app_window_by_cwd(app: str, cwd: str) -> dict:
+    """Activate *app* and raise the window whose title matches *cwd*'s basename.
+
+    VS Code and JetBrains IDEs do not expose per-pane TTYs the way iTerm
+    does, so we identify the right *window* by its title — which both
+    IDEs set to ``"<file> — <project folder>"``. We match on the cwd's
+    basename, which is the common project-folder convention. If multiple
+    windows match (or none), we fall back to a plain activate.
+    """
+    base = os.path.basename(cwd.rstrip("/")) if cwd else ""
+    if not base:
+        # No cwd to disambiguate — just bring the app forward.
+        try:
+            subprocess.run(
+                ["osascript", "-e", f'tell application "{app}" to activate'],
+                capture_output=True, text=True, timeout=5,
+            )
+            return {"ok": True, "action": "activated",
+                    "detail": f"Brought {app} to front (no cwd for window match)"}
+        except Exception as e:
+            return {"ok": False, "action": "error", "detail": str(e)}
+
+    # We use System Events for the window-raise because raising a window
+    # by index inside a `tell application` block is unreliable across
+    # Electron apps; AXRaise on the System Events window object works.
+    apple_script = f'''
+        tell application "{app}" to activate
+        delay 0.05
+        tell application "System Events"
+            tell process "{app}"
+                set winList to every window
+                repeat with w in winList
+                    if name of w contains "{base}" then
+                        perform action "AXRaise" of w
+                        return "found"
+                    end if
+                end repeat
+                return "not_found"
+            end tell
+        end tell
+    '''
+    try:
+        result = subprocess.run(
+            ["osascript", "-e", apple_script],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.stdout.strip() == "found":
+            return {"ok": True, "action": "focused",
+                    "detail": f"Focused {app} window for {base}"}
+        return {"ok": True, "action": "activated",
+                "detail": f"Brought {app} to front (no window matched '{base}')"}
+    except Exception as e:
+        return {"ok": False, "action": "error", "detail": str(e)}
+
+
+def _plain_activate(app: str, reason: str) -> dict:
+    """Bring *app* to the front; used when per-session focus is impossible."""
+    try:
+        subprocess.run(
+            ["osascript", "-e", f'tell application "{app}" to activate'],
+            capture_output=True, text=True, timeout=5,
+        )
+        return {"ok": True, "action": "activated",
+                "detail": f"Brought {app} to front ({reason})"}
+    except Exception as e:
+        return {"ok": False, "action": "error", "detail": str(e)}
+
+
 def open_session(session_id: str, config_dir: str, pid: int | None, alive: bool,
                  session_name: str = "", cwd: str = "",
                  cwd_live_siblings: int = 0) -> dict:
     """Open / focus a session.  Returns {ok, action, detail}."""
     if alive and pid:
-        app = find_parent_app(pid)
-        if app == "Warp":
+        tty = get_pid_tty(pid)
+        host = detect_session_host(pid, has_tty=tty is not None)
+        host_id = host["id"] if host else None
+        app = host["app"] if host else None
+
+        if host_id == "warp":
             return focus_warp_tab(session_name, cwd=cwd, session_id=session_id,
                                   cwd_live_siblings=cwd_live_siblings)
-        elif app:
-            script = f'tell application "{app}" to activate'
-            try:
-                subprocess.run(
-                    ["osascript", "-e", script],
-                    capture_output=True, text=True, timeout=5,
-                )
-                return {"ok": True, "action": "activated", "detail": f"Brought {app} to front"}
-            except Exception as e:
-                return {"ok": False, "action": "error", "detail": str(e)}
-        else:
-            return {"ok": False, "action": "unknown_app",
-                    "detail": "Session is running but couldn't identify the host app"}
+        if host_id == "iterm2":
+            if tty:
+                return focus_iterm_session(tty)
+            return _plain_activate("iTerm2", "no TTY for tab match")
+        if host_id == "terminal":
+            if tty:
+                return focus_terminal_app_tab(tty)
+            return _plain_activate("Terminal", "no TTY for tab match")
+        if host_id in ("vscode-terminal", "vscode-extension",
+                       "jetbrains-terminal", "jetbrains-extension"):
+            # IDEs don't expose per-pane TTYs; the best per-session focus
+            # we can do is to raise the window for this project's cwd.
+            return focus_app_window_by_cwd(app, cwd)
+        if host_id == "claude-desktop":
+            return _plain_activate("Claude", "Claude Desktop has no per-conversation focus API")
+        if app:
+            return _plain_activate(app, "unknown host kind")
+        return {"ok": False, "action": "unknown_app",
+                "detail": "Session is running but couldn't identify the host app"}
 
     # Session not running — resume in Warp
     # Build the claude resume command with the right config dir
@@ -1600,6 +1894,14 @@ def collect_sessions() -> dict:
                     # Merge in user annotations
                     ann = get_annotation(session_id)
 
+                    # Host detection is process-tree probing; only meaningful
+                    # while the claude CLI is alive. We deliberately don't
+                    # cache a last-known host for dead sessions — the user
+                    # asked for the icon to disappear once the session ends.
+                    host = None
+                    if alive and pid:
+                        host = detect_session_host(pid, has_tty=get_pid_tty(pid) is not None)
+
                     sessions.append({
                         "session_id": session_id,
                         "session_name": session_name,
@@ -1610,6 +1912,7 @@ def collect_sessions() -> dict:
                         "status": status,
                         "pid": pid,
                         "alive": alive,
+                        "host": host,
                         "config_dir": config_dir,
                         "last_activity": last_ts,
                         "last_activity_ago": time_ago(last_ts) if last_ts else "unknown",

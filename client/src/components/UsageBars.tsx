@@ -188,7 +188,7 @@ export function UsageBars({ rateLimits }: UsageBarsProps) {
 					windowLabel={`${scoped.label} weekly`}
 					entry={scoped}
 					updatedAt={scoped.updated_at}
-					staleNote="Data is stale — Claude Code refreshes this cache infrequently; open /usage in a session to update it."
+					staleNote={`This number may be outdated — Claude Code only refreshes it occasionally. To update it now: open any Claude Code session on this account and run /usage, then the fresh ${scoped.label} weekly value appears here.`}
 				/>
 			))}
 		</div>

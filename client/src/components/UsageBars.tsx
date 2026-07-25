@@ -40,11 +40,15 @@ function formatRelativeDuration(deltaSecs: number): string {
 	return remHours > 0 ? `${days}d ${remHours}h` : `${days}d`;
 }
 
+const STATUSLINE_STALE_NOTE =
+	"Data is stale — statusline hasn't refreshed recently.";
+
 interface UsageTooltipProps {
 	windowLabel: string;
 	entry: RateLimitEntry;
 	updatedAt: number;
 	anchorRect: DOMRect;
+	staleNote: string;
 }
 
 function UsageTooltip({
@@ -52,6 +56,7 @@ function UsageTooltip({
 	entry,
 	updatedAt,
 	anchorRect,
+	staleNote,
 }: UsageTooltipProps) {
 	const now = Date.now() / 1000;
 	const secondsUntilReset = entry.resets_at - now;
@@ -86,11 +91,7 @@ function UsageTooltip({
 				<span>Updated</span>
 				<span>{updatedAgo} ago</span>
 			</div>
-			{entry.is_stale && (
-				<div className="usage-tooltip-stale">
-					Data is stale — statusline hasn't refreshed recently.
-				</div>
-			)}
+			{entry.is_stale && <div className="usage-tooltip-stale">{staleNote}</div>}
 		</div>,
 		document.body,
 	);
@@ -101,9 +102,16 @@ interface UsageBarProps {
 	windowLabel: string;
 	entry: RateLimitEntry;
 	updatedAt: number;
+	staleNote?: string;
 }
 
-function UsageBar({ label, windowLabel, entry, updatedAt }: UsageBarProps) {
+function UsageBar({
+	label,
+	windowLabel,
+	entry,
+	updatedAt,
+	staleNote = STATUSLINE_STALE_NOTE,
+}: UsageBarProps) {
 	const pct = Math.min(100, Math.max(0, entry.used_percentage));
 	const staleClass = entry.is_stale ? " usage-bar-stale" : "";
 	const groupRef = useRef<HTMLDivElement>(null);
@@ -142,6 +150,7 @@ function UsageBar({ label, windowLabel, entry, updatedAt }: UsageBarProps) {
 					entry={entry}
 					updatedAt={updatedAt}
 					anchorRect={anchorRect}
+					staleNote={staleNote}
 				/>
 			)}
 		</div>
@@ -151,8 +160,8 @@ function UsageBar({ label, windowLabel, entry, updatedAt }: UsageBarProps) {
 export function UsageBars({ rateLimits }: UsageBarsProps) {
 	if (!rateLimits) return null;
 
-	const { five_hour, seven_day, updated_at } = rateLimits;
-	if (!five_hour && !seven_day) return null;
+	const { five_hour, seven_day, scoped_weeklies, updated_at } = rateLimits;
+	if (!five_hour && !seven_day && !scoped_weeklies?.length) return null;
 
 	return (
 		<div className="usage-bars">
@@ -172,6 +181,16 @@ export function UsageBars({ rateLimits }: UsageBarsProps) {
 					updatedAt={updated_at}
 				/>
 			)}
+			{scoped_weeklies?.map((scoped) => (
+				<UsageBar
+					key={scoped.label}
+					label={`${scoped.label} 7d`}
+					windowLabel={`${scoped.label} weekly`}
+					entry={scoped}
+					updatedAt={scoped.updated_at}
+					staleNote="Data is stale — Claude Code refreshes this cache infrequently; open /usage in a session to update it."
+				/>
+			))}
 		</div>
 	);
 }

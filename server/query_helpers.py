@@ -7,6 +7,7 @@ Depends on: stdlib only.
 import json
 import os
 import time
+from datetime import datetime
 
 
 def read_json(path: str):
@@ -17,12 +18,58 @@ def read_json(path: str):
         return None
 
 
+def _iso_to_epoch(iso_str: str | None) -> float:
+    try:
+        return datetime.fromisoformat(iso_str).timestamp()
+    except (TypeError, ValueError):
+        return 0
+
+
+def get_scoped_weeklies(config_dir: str) -> list[dict]:
+    """Read model-scoped weekly limits (e.g. the Fable-only weekly) from Claude Code's
+    cached usage snapshot in <config_dir>/[.]claude.json.
+
+    The statusline JSON only carries five_hour/seven_day, so scoped weeklies are
+    unavailable via rate-limits.json; this cache is the only on-disk source. Claude
+    Code refreshes it infrequently (e.g. when /usage is opened), so each entry keeps
+    its own updated_at for staleness display.
+    """
+    for name in ("claude.json", ".claude.json"):
+        cfg = read_json(os.path.join(config_dir, name))
+        cached = (cfg or {}).get("cachedUsageUtilization")
+        if not cached:
+            continue
+        fetched_at = cached.get("fetchedAtMs", 0) / 1000
+        now = time.time()
+        scoped = []
+        for limit in cached.get("utilization", {}).get("limits") or []:
+            if limit.get("kind") != "weekly_scoped" or limit.get("percent") is None:
+                continue
+            resets_at = _iso_to_epoch(limit.get("resets_at"))
+            model = (limit.get("scope") or {}).get("model") or {}
+            scoped.append(
+                {
+                    "label": model.get("display_name") or "Scoped",
+                    "used_percentage": limit["percent"],
+                    "resets_at": resets_at,
+                    # Past reset means the cached percent no longer applies; a >6h-old
+                    # fetch is flagged too so the UI shows this isn't live data.
+                    "is_stale": (now - fetched_at) > 6 * 3600 or resets_at < now,
+                    "updated_at": fetched_at,
+                }
+            )
+        if scoped:
+            return scoped
+    return []
+
+
 def get_rate_limits(config_dir: str) -> dict | None:
     """Read rate-limits.json written by the statusline capture script."""
     path = os.path.join(config_dir, "rate-limits.json")
     data = read_json(path)
+    scoped_weeklies = get_scoped_weeklies(config_dir)
     if not data:
-        return None
+        data = {}
 
     now = time.time()
     updated_at = data.get("updated_at", 0)
@@ -39,6 +86,9 @@ def get_rate_limits(config_dir: str) -> dict | None:
                 "resets_at": resets_at,
                 "is_stale": age_stale or resets_at < now,
             }
+
+    if scoped_weeklies:
+        result["scoped_weeklies"] = scoped_weeklies
 
     if not result:
         return None

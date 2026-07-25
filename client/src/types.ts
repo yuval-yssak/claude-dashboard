@@ -111,9 +111,18 @@ export interface RateLimitEntry {
 	is_stale: boolean;
 }
 
+// Model-scoped weekly limit (e.g. the Fable-only weekly). Sourced from Claude
+// Code's cached usage snapshot, which refreshes on its own schedule — hence a
+// per-entry updated_at instead of the shared statusline updated_at.
+export interface ScopedWeeklyEntry extends RateLimitEntry {
+	label: string;
+	updated_at: number;
+}
+
 export interface RateLimits {
 	five_hour?: RateLimitEntry;
 	seven_day?: RateLimitEntry;
+	scoped_weeklies?: ScopedWeeklyEntry[];
 	updated_at: number;
 }
 

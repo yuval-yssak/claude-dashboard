@@ -25,17 +25,35 @@ def _iso_to_epoch(iso_str: str | None) -> float:
         return 0
 
 
+def config_json_paths(config_dir: str) -> list[str]:
+    """Candidate paths for Claude Code's main config JSON belonging to `config_dir`.
+
+    Two layouts exist and both must be checked:
+      - `<config_dir>/.claude.json` — used when CLAUDE_CONFIG_DIR points at the dir
+        (e.g. ~/.claude-personal/.claude.json)
+      - `<config_dir>.json` — the default layout, where the config sits *next to*
+        the dir rather than inside it (~/.claude -> ~/.claude.json)
+
+    Only checking inside the dir silently loses the default account entirely, which
+    is what hid its Fable weekly bar and its email (it fell back to the dir name).
+    Note `<config_dir>/claude.json` (no dot) is deliberately not a candidate — Claude
+    Code never writes it, and users do keep unrelated files there (e.g. an mcpServers
+    snippet) that would shadow the real config.
+    """
+    return [os.path.join(config_dir, ".claude.json"), f"{config_dir.rstrip('/')}.json"]
+
+
 def get_scoped_weeklies(config_dir: str) -> list[dict]:
     """Read model-scoped weekly limits (e.g. the Fable-only weekly) from Claude Code's
-    cached usage snapshot in <config_dir>/[.]claude.json.
+    cached usage snapshot in the account's config JSON.
 
     The statusline JSON only carries five_hour/seven_day, so scoped weeklies are
     unavailable via rate-limits.json; this cache is the only on-disk source. Claude
     Code refreshes it infrequently (e.g. when /usage is opened), so each entry keeps
     its own updated_at for staleness display.
     """
-    for name in ("claude.json", ".claude.json"):
-        cfg = read_json(os.path.join(config_dir, name))
+    for path in config_json_paths(config_dir):
+        cfg = read_json(path)
         cached = (cfg or {}).get("cachedUsageUtilization")
         if not cached:
             continue
@@ -98,9 +116,8 @@ def get_rate_limits(config_dir: str) -> dict | None:
 
 
 def get_account_email(config_dir: str) -> str:
-    # Try both possible config filenames
-    for name in ("claude.json", ".claude.json"):
-        cfg = read_json(os.path.join(config_dir, name))
+    for path in config_json_paths(config_dir):
+        cfg = read_json(path)
         if cfg and "oauthAccount" in cfg:
             return cfg["oauthAccount"].get("emailAddress", "unknown")
     return os.path.basename(config_dir)
